@@ -15,14 +15,24 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
 	sessionCounter int
 	counterMutex   sync.Mutex
+	rdb *redis.Client
+    ctx = context.Background()
 )
+type Session struct {
+    SessionID     string `json:"session_id"`
+    ContainerName string `json:"container_name"`
+    DOI           string `json:"doi"`
+    CreationDate  string `json:"creation_date"`
+}
 
 func main() {
+	initRedis()
 	http.HandleFunc("/api/create-session", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src http://localhost:8080")
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
@@ -47,6 +57,17 @@ func main() {
 	}
 }
 
+func initRedis() {
+    rdb = redis.NewClient(&redis.Options{
+        Addr: "localhost:6379", // change if your Redis is on a different host
+        DB:   0,                // default DB
+    })
+
+    _, err := rdb.Ping(ctx).Result()
+    if err != nil {
+        panic("Failed to connect to Redis: " + err.Error())
+    }
+}
 
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
@@ -72,6 +93,30 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	count := sessionCounter
 	counterMutex.Unlock()
 	sessionID := fmt.Sprintf("%s%d", dateStr, count)
+	containerName := "worker-" + sessionID
+	creationDate := now.Format("2006-01-02")
+
+	session := Session{
+		SessionID:     sessionID,
+		ContainerName: containerName,
+		DOI:           doi,
+		CreationDate:  creationDate,
+	}
+
+	// Store as a Redis hash
+	key := "session:" + sessionID
+	err = rdb.HSet(ctx, key, map[string]interface{}{
+		"session_id":     session.SessionID,
+		"container_name": session.ContainerName,
+		"doi":            session.DOI,
+		"creation_date":  session.CreationDate,
+	}).Err()
+	if err != nil {
+		fmt.Println("Error saving session to Redis:", err)
+	}
+
+	// Optional: Set TTL so sessions expire automatically after 1 hour
+	rdb.Expire(ctx, key, time.Hour)
 	
 
 	sessionDir := filepath.Join("sessions", sessionID)
