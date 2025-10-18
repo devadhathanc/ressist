@@ -12,39 +12,24 @@ import (
 	"time"
 
 
-	// "github.com/docker/docker/api/types/container"
-	// "github.com/docker/docker/api/types/mount"
-	// "github.com/docker/docker/client"
-	"github.com/redis/go-redis/v9"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/client"
 )
 
 var (
 	sessionCounter int
 	counterMutex   sync.Mutex
-	rdb             *redis.Client
-	ctx             = context.Background()
 )
 
 func main() {
-	rdb = redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "", // no password
-		DB:       0,  // default DB
-	})
-
-	_, err := rdb.Ping(ctx).Result()
-	if err != nil {
-		fmt.Println("❌ Redis connection failed:", err)
-	} else {
-		fmt.Println("✅ Connected to Redis")
-	}
 	http.HandleFunc("/api/create-session", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src http://localhost:8080")
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
 		if r.Method == http.MethodPost {
 			handleCreateSession(w, r)
 		} else if r.Method == http.MethodOptions {
 			// Handle CORS preflight
-			
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			
@@ -56,7 +41,10 @@ func main() {
 		}
 	})
 	fmt.Println("🚀 Server running on :8080")
-	http.ListenAndServe(":8080", nil)
+	err := http.ListenAndServe(":8080", nil)
+	if err != nil {
+		fmt.Println("❌ Server failed to start: %v", err)
+	}
 }
 
 
@@ -96,13 +84,13 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fmt.Println("📄 Downloaded PDF:", pdfPath)
-		// go analyzePaper(sessionID, pdfPath)
+		go analyzePaper(sessionID, pdfPath)
 	} else if err == nil {
 		defer file.Close()
 		dst, _ := os.Create(filepath.Join(sessionDir, handler.Filename))
 		io.Copy(dst, file)
 		dst.Close()
-		// go analyzePaper(sessionID, dst.Name())
+		go analyzePaper(sessionID, dst.Name())
 	} else {
 		http.Error(w, "No valid DOI or PDF provided", 400)
 		return
@@ -114,8 +102,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 func fetchPDFByDOI(doi, sessionDir string) (string, error) {
 	type UnpaywallResponse struct {
-		Title   string `json:"title"`
-		BestOA  struct {
+		BestOA struct {
 			URLForPDF string `json:"url_for_pdf"`
 		} `json:"best_oa_location"`
 	}
@@ -142,18 +129,6 @@ func fetchPDFByDOI(doi, sessionDir string) (string, error) {
 		return "", fmt.Errorf("no PDF URL found for DOI")
 	}
 
-	// Save session metadata to Redis
-	err = rdb.HSet(ctx, fmt.Sprintf("session:%s", filepath.Base(sessionDir)),
-		"doi", doi,
-		"title", data.Title,
-	).Err()
-	if err != nil {
-		fmt.Println("❌ Failed to save metadata to Redis:", err)
-	} else {
-		fmt.Printf("💾 Stored session metadata → [%s]: \"%s\"\n", doi, data.Title)
-	}
-
-	// Download the PDF
 	pdfResp, err := http.Get(pdfURL)
 	if err != nil {
 		return "", fmt.Errorf("error downloading PDF: %v", err)
@@ -177,4 +152,48 @@ func fetchPDFByDOI(doi, sessionDir string) (string, error) {
 	}
 
 	return filePath, nil
+}
+
+func analyzePaper(sessionID, pdfPath string) {
+	fmt.Println("🧠 Launching Docker worker for session:", sessionID)
+
+	cli, err := client.NewClientWithOpts(client.FromEnv)
+	if err != nil {
+		fmt.Println("Docker client error:", err)
+		return
+	}
+
+	ctx := context.Background()
+
+	absSource, err := filepath.Abs(filepath.Dir(pdfPath))
+	if err != nil {
+		fmt.Println("Error resolving absolute path:", err)
+		return
+	}
+	resp, err := cli.ContainerCreate(ctx,
+		&container.Config{
+			Image: "paper-processor:latest",
+			Cmd:   []string{"--session", sessionID, "--file", "/data/paper.pdf"},
+		},
+		&container.HostConfig{
+			Mounts: []mount.Mount{
+				{
+					Type:   mount.TypeBind,
+					Source: absSource,
+					Target: "/data",
+				},
+			},
+		}, nil, nil, "worker-"+sessionID)
+
+	if err != nil {
+		fmt.Println("Error creating container:", err)
+		return
+	}
+
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		fmt.Println("Error starting container:", err)
+		return
+	}
+
+	fmt.Println("✅ Worker started for session", sessionID)
 }
