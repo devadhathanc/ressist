@@ -12,6 +12,7 @@ function Home() {
 
     const[doi, setDoi] = React.useState("10.1038/s41598-025-19951-2");
     const [file, setFile] = React.useState(null);
+    const [loading, setLoading] = React.useState(false);
 
     function handlekey(e){
         setKey(e.target.value);
@@ -25,6 +26,9 @@ function Home() {
         }
     }
     async function handleCreate() {
+        if (loading) return;
+        setLoading(true);
+        try {
             const formData = new FormData();
             formData.append('doi', doi);
             formData.append('file', file);
@@ -34,6 +38,9 @@ function Home() {
             });
             const data = await res.json();
             navigate("/chat" , {state:{title : "Session Chat", session_id :data.session_id, creation_date : data.creation_date}});
+        } finally {
+            setLoading(false);
+        }
     }
     
     return (
@@ -61,8 +68,9 @@ function Home() {
                     onChange={(e) => setFile(e.target.files[0])}/>
                 <button className="border-1 w-20 mt-5 mb-4 hover:bg-gray-400"
                     type="submit"
+                    disabled={loading}
                     onClick={() => handleCreate()}>
-                        DONE
+                        {loading ? "Loading..." : "DONE"}
                 </button>
                 </div>
             </div>

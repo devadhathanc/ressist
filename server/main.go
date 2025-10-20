@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 
@@ -16,13 +15,12 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/redis/go-redis/v9"
+	"github.com/joho/godotenv"
 )
 
 var (
-	sessionCounter int
-	counterMutex   sync.Mutex
 	rdb *redis.Client
-    ctx = context.Background()
+	ctx = context.Background()
 )
 type Session struct {
     SessionID     string `json:"session_id"`
@@ -39,10 +37,8 @@ func main() {
 		if r.Method == http.MethodPost {
 			handleCreateSession(w, r)
 		} else if r.Method == http.MethodOptions {
-			// Handle CORS preflight
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			
 			w.WriteHeader(http.StatusNoContent)
 		} else {
 			w.Header().Set("Content-Type", "application/json")
@@ -51,25 +47,40 @@ func main() {
 		}
 	})
 	fmt.Println("🚀 Server running on :8080")
-	err := http.ListenAndServe(":8080", nil)
-	if err != nil {
-		fmt.Println("❌ Server failed to start: %v", err)
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		fmt.Printf("❌ Server failed to start: %v\n", err)
 	}
 }
 
-func initRedis() {
-    rdb = redis.NewClient(&redis.Options{
-        Addr: "localhost:6379", // change if your Redis is on a different host
-        DB:   0,                // default DB
-    })
-
-    _, err := rdb.Ping(ctx).Result()
-    if err != nil {
-        panic("Failed to connect to Redis: " + err.Error())
-    }
+func canCreateSession() (bool, error) {
+	count, err := rdb.SCard(ctx, "active_sessions").Result()
+	if err != nil {
+		return false, err
+	}
+	return count < 10, nil
 }
 
+func initRedis() {
+	_ = godotenv.Load("../.env")
+	opt, _ := redis.ParseURL(os.Getenv("REDIS_URL"))
+	rdb = redis.NewClient(opt)
+	if _, err := rdb.Ping(ctx).Result(); err != nil {
+		panic(err)
+	}
+}
+
+// No cleanup goroutine needed; rely on Redis TTL expiration.
+
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	ok, err := canCreateSession()
+	if err != nil {
+		http.Error(w, "Redis error", 500)
+		return
+	}
+	if !ok {
+		http.Error(w, "Maximum active sessions reached (10). Try again later.", 429)
+		return
+	}
 	if r.Method == http.MethodOptions {
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
@@ -85,14 +96,9 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	doi := r.FormValue("doi")
 	file, handler, err := r.FormFile("pdf")
 
-	// Generate session ID (YYMMDDi)
+	// Generate session ID as YYMMDDHHMM
 	now := time.Now()
-	dateStr := now.Format("060102")
-	counterMutex.Lock()
-	sessionCounter++
-	count := sessionCounter
-	counterMutex.Unlock()
-	sessionID := fmt.Sprintf("%s%d", dateStr, count)
+	sessionID := now.Format("0601021504")
 	containerName := "worker-" + sessionID
 	creationDate := now.Format("2006-01-02")
 
@@ -103,8 +109,8 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		CreationDate:  creationDate,
 	}
 
-	// Store as a Redis hash
-	key := "session:" + sessionID
+	key := sessionID
+	// Store session as Redis hash
 	err = rdb.HSet(ctx, key, map[string]interface{}{
 		"session_id":     session.SessionID,
 		"container_name": session.ContainerName,
@@ -112,12 +118,13 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		"creation_date":  session.CreationDate,
 	}).Err()
 	if err != nil {
-		fmt.Println("Error saving session to Redis:", err)
+		http.Error(w, "Failed to save session", 500)
+		return
 	}
-
-	// Optional: Set TTL so sessions expire automatically after 1 hour
+	// Add to active_sessions set and set TTL for both hash and set membership
+	rdb.SAdd(ctx, "active_sessions", sessionID)
 	rdb.Expire(ctx, key, time.Hour)
-	
+	rdb.Expire(ctx, "active_sessions", time.Hour)
 
 	sessionDir := filepath.Join("sessions", sessionID)
 	os.MkdirAll(sessionDir, 0755)
@@ -142,7 +149,6 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Write([]byte(fmt.Sprintf(`{"session_id": "%s", "creation_date" : "%s"}`, sessionID, now.Format("2006-01-02"))))
-	// json.NewEncoder(w).Encode(map[string]string{"session_id": sessionID})
 }
 
 func fetchPDFByDOI(doi, sessionDir string) (string, error) {
