@@ -37,6 +37,10 @@ function Home() {
                 body: formData
             });
             const data = await res.json();
+            if (data.error === "max sessions reached") {
+                alert("Max sessions reached. Please try again later.");
+                return;
+            }
             navigate("/chat" , {state:{title : "Session Chat", session_id :data.session_id, creation_date : data.creation_date}});
         } finally {
             setLoading(false);

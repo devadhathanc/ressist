@@ -78,7 +78,9 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		http.Error(w, "Maximum active sessions reached (10). Try again later.", 429)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(429)
+		json.NewEncoder(w).Encode(map[string]string{"error": "max sessions reached"})
 		return
 	}
 	if r.Method == http.MethodOptions {
@@ -94,11 +96,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	r.ParseMultipartForm(10 << 20) // 10MB max
 	doi := r.FormValue("doi")
-	file, handler, err := r.FormFile("pdf")
+	file, handler, fileErr := r.FormFile("pdf")
 
-	// Generate session ID as YYMMDDHHMM
+	// Generate session ID as YYMMHHSS
 	now := time.Now()
-	sessionID := now.Format("0601021504")
+	sessionID := now.Format("06011505")
 	containerName := "worker-" + sessionID
 	creationDate := now.Format("2006-01-02")
 
@@ -137,12 +139,22 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Println("📄 Downloaded PDF:", pdfPath)
 		go analyzePaper(sessionID, pdfPath)
-	} else if err == nil {
+	} else if fileErr == nil {
+		fmt.Println("📄 Received uploaded PDF:", handler.Filename)
 		defer file.Close()
-		dst, _ := os.Create(filepath.Join(sessionDir, handler.Filename))
-		io.Copy(dst, file)
-		dst.Close()
-		go analyzePaper(sessionID, dst.Name())
+		dstPath := filepath.Join(sessionDir, handler.Filename)
+		dst, err := os.Create(dstPath)
+		if err != nil {
+			http.Error(w, "Failed to save uploaded PDF: "+err.Error(), 500)
+			return
+		}
+		defer dst.Close()
+
+		_, err = io.Copy(dst, file)
+		if err != nil {
+			http.Error(w, "Error writing PDF file: "+err.Error(), 500)
+			return
+		}
 	} else {
 		http.Error(w, "No valid DOI or PDF provided", 400)
 		return
