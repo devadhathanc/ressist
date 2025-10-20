@@ -31,24 +31,25 @@ type Session struct {
 
 func main() {
 	initRedis()
-	http.HandleFunc("/api/create-session", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src http://localhost:8080")
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
-		if r.Method == http.MethodPost {
-			handleCreateSession(w, r)
-		} else if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.WriteHeader(http.StatusNoContent)
-		} else {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			w.Write([]byte(`{"error":"Method not allowed"}`))
-		}
-	})
+	http.HandleFunc("/api/create-session", withCORS(handleCreateSession))
+	http.HandleFunc("/api/join-session", withCORS(handleJoinSession))
 	fmt.Println("🚀 Server running on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		fmt.Printf("❌ Server failed to start: %v\n", err)
+	}
+}
+
+func withCORS(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src http://localhost:8080")
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next(w, r)
 	}
 }
 
@@ -72,6 +73,8 @@ func initRedis() {
 // No cleanup goroutine needed; rely on Redis TTL expiration.
 
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
 	ok, err := canCreateSession()
 	if err != nil {
 		http.Error(w, "Redis error", 500)
@@ -83,19 +86,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "max sessions reached"})
 		return
 	}
-	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
-	w.Header().Set("Content-Type", "application/json")
-
+	
 	r.ParseMultipartForm(10 << 20) // 10MB max
 	doi := r.FormValue("doi")
+	if doi == "" {
+		doi = "0"
+	}
 	file, handler, fileErr := r.FormFile("pdf")
 
 	// Generate session ID as YYMMHHSS
@@ -161,6 +157,47 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Write([]byte(fmt.Sprintf(`{"session_id": "%s", "creation_date" : "%s"}`, sessionID, now.Format("2006-01-02"))))
+}
+
+func handleJoinSession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	var req struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	exists, err := rdb.Exists(ctx, req.SessionID).Result()
+	if err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Redis error"})
+		return
+	}
+	if exists == 0 {
+		w.WriteHeader(404)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Session not found"})
+		return
+	}
+
+	// Retrieve session details
+	sessionData, err := rdb.HGetAll(ctx, req.SessionID).Result()
+	if err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to retrieve session"})
+		return
+	}
+
+	json.NewEncoder(w).Encode(sessionData)
 }
 
 func fetchPDFByDOI(doi, sessionDir string) (string, error) {

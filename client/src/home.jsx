@@ -7,22 +7,41 @@ import Example from "./example.jsx"
 
 function Home() {
     const navigate = useNavigate();
-    const [key, setKey] = React.useState();
-    const keys = [1234, 5678, 91011];
+    const [key, setKey] = React.useState("");
 
     const[doi, setDoi] = React.useState("10.1038/s41598-025-19951-2");
     const [file, setFile] = React.useState(null);
     const [loading, setLoading] = React.useState(false);
 
-    function handlekey(e){
-        setKey(e.target.value);
-    }
-    function handleSubmit(){
-        console.log(key);
-        if(keys.includes(Number(key))){
-            navigate("/chat");
-        }else{
-            alert(Number(key) + " is not a valid key" );
+
+    async function handleSubmit(){
+        if (!key) return alert("Please enter a session key");
+
+        try {
+            const res = await fetch("http://localhost:8080/api/join-session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ session_id: key })
+            });
+
+            const data = await res.json();
+
+            if (res.status === 404 || data.error) {
+                alert(`Session ${key} not found`);
+                return;
+            }
+
+            // Navigate to chat with session metadata
+            navigate("/chat", {
+                state: {
+                    title: "Session Chat",
+                    session_id: data.session_id,
+                    creation_date: data.creation_date
+                }
+            });
+        } catch (err) {
+            console.error(err);
+            alert("Failed to join session. Try again.");
         }
     }
     async function handleCreate() {
@@ -54,7 +73,7 @@ function Home() {
             <div className="flex sm:flex-row flex-col justify-center m-4 gap-8">
                 <div className="flex flex-col items-center px-2 border-2 border-black">
                 <h1 className="text-center mb-2 underline font-[600]"> session-key</h1>
-                <input type="number" className="border-2 border-light " value={key} onChange={handlekey} placeholder=" enter the key"/>
+                <input type="number" className="border-2 border-light px-2" value={key} onChange={(e) => setKey(e.target.value)} placeholder="enter the key"/>
                 <p>{key}</p>
                 <button className="border-1 w-20 m-4 hover:bg-gray-400" type="submit" onClick={() => handleSubmit()}>SUBMIT</button>
             </div>
