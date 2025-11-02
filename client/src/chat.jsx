@@ -17,10 +17,13 @@ function Chat() {
     setInput("");
 
     try {
-      const res = await fetch("http://localhost:8080/api/chat", {
+      const res = await fetch("http://localhost:9090/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id, question: input }),
+        body: JSON.stringify({
+          session_id: session_id || "",
+          question: input,
+        }),
       });
 
       let data;
@@ -74,9 +77,12 @@ function Chat() {
                       ? "ml-auto bg-blue-600 text-white"
                       : "mr-auto bg-gray-200 text-black"
                   }`}
-                >
-                  {msg.text}
-                </div>
+                  dangerouslySetInnerHTML={{
+                    __html: msg.text
+                      .replace(/\n/g, "<br>")
+                      .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>"),
+                  }}
+                />
               ))}
             </div>
           )}
