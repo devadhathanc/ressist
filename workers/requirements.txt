@@ -1,5 +1,0 @@
-pdfplumber
-langchain
-qdrant-client
-redis
-openai

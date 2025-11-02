@@ -1,4 +1,6 @@
 import os
+import time
+import threading
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -63,3 +65,17 @@ qdrant.upload_points(
 )
 
 print(f"✅ Successfully stored {len(chunks)} text chunks in Qdrant collection '{SESSION_ID}'.")
+
+os.remove(PDF_PATH)
+print(f"🗑️ Deleted PDF file '{PDF_PATH}' after successful embedding.")
+
+# --- Auto Delete Session Collection after Time Limit ---
+
+
+def auto_delete_collection():
+    print(f"🕒 Collection '{SESSION_ID}' will be deleted after 3600 seconds...")
+    time.sleep(3600)
+    qdrant.delete_collection(SESSION_ID)
+    print(f"🗑️ Collection '{SESSION_ID}' has been automatically deleted after timeout.")
+
+threading.Thread(target=auto_delete_collection, daemon=True).start()

@@ -6,6 +6,8 @@ from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
 import os
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+load_dotenv()
 
 app = FastAPI()
 
@@ -17,7 +19,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure Gemini
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Load embeddings model (same as before)
