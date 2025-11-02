@@ -1,9 +1,11 @@
+import { useNavigate } from "react-router-dom";
 import React, { useState } from "react";
 import { useLocation } from "react-router";
 
 function Chat() {
+  const navigate = useNavigate();
   const location = useLocation();
-  const { session_id, creation_date, title } = location.state || {};
+  const { session_id, creation_date } = location.state || {};
 
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
@@ -53,9 +55,12 @@ function Chat() {
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
       <header className="text-center py-5 border-b">
-        <h1 className="text-3xl font-mono">{title || "Session Chat"}</h1>
+        <h1 className="text-3xl font-mono">Session/{session_id}</h1>
         <div className="flex justify-between mx-5 text-sm text-gray-600">
-          <span>Session ID: {session_id}</span>
+          <button className="border solid rounded px-3 py-1 font-mono text-blue-500 hover:bg-blue-400 hover:text-white"
+            onClick={() => navigate("/")}>
+              back
+          </button>
           <span>Created: {creation_date}</span>
         </div>
       </header>
