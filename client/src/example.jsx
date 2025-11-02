@@ -1,51 +1,50 @@
 import React, {useState} from "react";
 
-// const cars= ["BMW", "Audi", "Mercedes"];
+// const csubs= ["BMW", "Audi", "Mercedes"];
 
 
 function Example() {
 
-    const [cars,setCars] = useState([]);
-    const [carYear,setYear] = useState(new Date().getFullYear());
-    const [carMake,setMake] = useState("");
-    const [carModel,setModel] = useState("");
-    function handleAddCar(){
-        const newCar = {year: carYear, make: carMake, model: carModel};
-        setCars(c => ([...c,newCar]));
+    const [csubs,setCsubs] = useState([]);
+    const [csubYesub,setYesub] = useState(new Date().getFullYesub());
+    const [csubMake,setMake] = useState("");
+    const [csubModel,setModel] = useState("");
+    function handleAddCsub(){
+        const newCsub = {yesub: csubYesub, make: csubMake, model: csubModel};
+        setCsubs(c => ([...c,newCsub]));
         
     }
-    function handleRemoveCar(index){
-        setCars(cars.filter((_,i) => i!==index));
+    function handleRemoveCsub(index){
+        setCsubs(csubs.filter((_,i) => i!==index));
     }
 
-    function handleYearChange(e){
-        setYear(e.target.value);
+    function handleYesubChange(e){
+        setYesub(e.tsubget.value);
     }
 
     function handleMakeChange(e){
-        setMake(e.target.value);
+        setMake(e.tsubget.value);
     }
 
     function handleModelChange(e){
-        setModel(e.target.value);
+        setModel(e.tsubget.value);
     }
 
     return(
         <>
-            <h1>Cars</h1>
+            <h1>Csubs</h1>
             <ol>
-                {cars.map((car,index) => (
-                    <li key={index} onClick={() => handleRemoveCar(index)}>{car.year} {car.make} {car.model}</li>
+                {csubs.map((csub,index) => (
+                    <li key={index} onClick={() => handleRemoveCsub(index)}>{csub.yesub} {csub.make} {csub.model}</li>
                 ))}
             </ol>
-            <input type= "number" placeholder="Year" onChange={handleYearChange}/>
+            <input type= "number" placeholder="Yesub" onChange={handleYesubChange}/>
             <input type= "text" placeholder="Make" onChange={handleMakeChange}/>
             <input type= "text" placeholder="Model" onChange={handleModelChange}/>
-            <button onClick={handleAddCar}>AddCar</button>
+            <button onClick={handleAddCsub}>AddCsub</button>
         </>
         
     )
 }
 
 export default Example
-

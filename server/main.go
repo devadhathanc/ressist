@@ -1,19 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
-
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/client"
 	"github.com/redis/go-redis/v9"
 	"github.com/joho/godotenv"
 )
@@ -33,6 +31,7 @@ func main() {
 	initRedis()
 	http.HandleFunc("/api/create-session", withCORS(handleCreateSession))
 	http.HandleFunc("/api/join-session", withCORS(handleJoinSession))
+	http.HandleFunc("/api/chat", withCORS(handleChat))
 	fmt.Println("🚀 Server running on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		fmt.Printf("❌ Server failed to start: %v\n", err)
@@ -134,7 +133,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fmt.Println("📄 Downloaded PDF:", pdfPath)
-		go analyzePaper(sessionID, pdfPath)
+		go indexPDFtoQdrant(sessionID, pdfPath)
 	} else if fileErr == nil {
 		fmt.Println("📄 Received uploaded PDF:", handler.Filename)
 		defer file.Close()
@@ -151,6 +150,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error writing PDF file: "+err.Error(), 500)
 			return
 		}
+		go indexPDFtoQdrant(sessionID, dstPath)
 	} else {
 		http.Error(w, "No valid DOI or PDF provided", 400)
 		return
@@ -254,46 +254,62 @@ func fetchPDFByDOI(doi, sessionDir string) (string, error) {
 	return filePath, nil
 }
 
-func analyzePaper(sessionID, pdfPath string) {
-	fmt.Println("🧠 Launching Docker worker for session:", sessionID)
+func indexPDFtoQdrant(sessionID, pdfPath string) {
+	fmt.Println("🧠 Indexing PDF into Qdrant for session:", sessionID)
 
-	cli, err := client.NewClientWithOpts(client.FromEnv)
+	cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/model.py")
+	cmd.Env = append(os.Environ(),
+		"SESSION_ID="+sessionID,
+		"PDF_PATH="+pdfPath,
+		"GEMINI_API_KEY="+os.Getenv("GEMINI_API_KEY"),
+		"QDRANT_URL="+os.Getenv("QDRANT_URL"),
+	)
+
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Println("Docker client error:", err)
+		fmt.Println("❌ Error running model.py:", err, string(out))
 		return
 	}
 
-	ctx := context.Background()
+	fmt.Println("✅ PDF successfully embedded and stored in Qdrant for session", sessionID)
+}
 
-	absSource, err := filepath.Abs(filepath.Dir(pdfPath))
+func handleChat(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	var req struct {
+		SessionID string `json:"session_id"`
+		Question  string `json:"question"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" || req.Question == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	forwardReqBody, err := json.Marshal(req)
 	if err != nil {
-		fmt.Println("Error resolving absolute path:", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to marshal request"})
 		return
 	}
-	resp, err := cli.ContainerCreate(ctx,
-		&container.Config{
-			Image: "paper-processor:latest",
-			Cmd:   []string{"--session", sessionID, "--file", "/data/paper.pdf"},
-		},
-		&container.HostConfig{
-			Mounts: []mount.Mount{
-				{
-					Type:   mount.TypeBind,
-					Source: absSource,
-					Target: "/data",
-				},
-			},
-		}, nil, nil, "worker-"+sessionID)
 
+	// Simplified forward request
+	resp, err := http.Post("http://localhost:5000/chat", "application/json", bytes.NewReader(forwardReqBody))
 	if err != nil {
-		fmt.Println("Error creating container:", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to contact chat service"})
 		return
 	}
+	defer resp.Body.Close()
 
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		fmt.Println("Error starting container:", err)
-		return
-	}
-
-	fmt.Println("✅ Worker started for session", sessionID)
+	// Return response as-is
+	body, _ := io.ReadAll(resp.Body)
+	w.Write(body)
 }
