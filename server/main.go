@@ -223,7 +223,7 @@ func fetchPDFByDOI(doi, sessionDir string) (string, error) {
 
 	pdfURL := data.BestOA.URLForPDF
 	if pdfURL == "" {
-		return "", fmt.Errorf("no PDF URL found for DOI")
+		return "", fmt.Errorf("No Open Access available for this paper")
 	}
 
 	pdfResp, err := http.Get(pdfURL)

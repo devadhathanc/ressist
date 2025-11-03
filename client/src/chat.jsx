@@ -100,8 +100,8 @@ function Chat() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) =>{
-              if(e.key === "Enter"){
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
                 sendMessage();
               }
             }}

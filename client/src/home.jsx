@@ -8,7 +8,7 @@ import Example from "./example.jsx"
 function Home() {
     const navigate = useNavigate();
     const [key, setKey] = React.useState("");
-
+    const [text, setText] = React.useState("Assistant Here");
     const[doi, setDoi] = React.useState("10.1038/s41598-025-19951-2");
     const [file, setFile] = React.useState(null);
     const [loading, setLoading] = React.useState(false);
@@ -47,6 +47,7 @@ function Home() {
     async function handleCreate() {
         if (loading) return;
         setLoading(true);
+        setText("Loading");
         try {
             const formData = new FormData();
             if (doi && doi.trim() !== "") {
@@ -68,6 +69,7 @@ function Home() {
             navigate("/chat" , {state:{title : "Session Chat", session_id :data.session_id, creation_date : data.creation_date}});
         } finally {
             setLoading(false);
+            setText("Assistant Here");
         }
     }
     
@@ -95,16 +97,21 @@ function Home() {
                     accept="application/pdf"
                     onChange={(e) => setFile(e.target.files[0])}/>
                 <button
-                    className={`border-1 w-20 mt-5 mb-4 ${loading ? 'bg-gray-400 text-white cursor-not-allowed' : 'hover:bg-gray-400'}`}
+                    className={`border-1 w-20 mt-5 mb-4 ${loading ? 'bg-black text-white cursor-not-allowed' : 'hover:bg-gray-400'}`}
                     type="submit"
                     disabled={loading}
                     onClick={() => handleCreate()}>
-                        {loading ? "Loading..." : "DONE"}
+                        DONE
                 </button>
                 </div>
             </div>
+            <div className="flex-grow flex items-center justify-center pt-[5%]">
+                <h1 className="text-center text-[150%] font-semibold">+ {text} +</h1>
+            </div>
             </main>
             {/* <Example /> */}
+
+            
 
             <Footer />
         </div>
