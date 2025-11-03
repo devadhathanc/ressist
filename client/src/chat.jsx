@@ -9,7 +9,6 @@ function Chat() {
 
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
-
   const sendMessage = async () => {
     if (!input.trim()) return;
 
@@ -84,8 +83,10 @@ function Chat() {
                   }`}
                   dangerouslySetInnerHTML={{
                     __html: msg.text
+                      .replace(/^###\s?(.*)$/gm, "<b>$1</b>")
                       .replace(/\n/g, "<br>")
-                      .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>"),
+                      .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+                      .replace(/<\/b><br>/g, "</b><br><br>") // spacing after bold headers
                   }}
                 />
               ))}
@@ -99,6 +100,11 @@ function Chat() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) =>{
+              if(e.key === "Enter"){
+                sendMessage();
+              }
+            }}
             placeholder="Ask about the paper..."
             className="flex-grow border-2 border-gray-300 rounded-l-lg p-2 focus:outline-none"
           />
