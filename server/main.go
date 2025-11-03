@@ -88,9 +88,6 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	
 	r.ParseMultipartForm(10 << 20) // 10MB max
 	doi := r.FormValue("doi")
-	if doi == "" {
-		doi = "0"
-	}
 	file, handler, fileErr := r.FormFile("pdf")
 
 	// Generate session ID as YYMMHHSS
@@ -133,7 +130,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fmt.Println("📄 Downloaded PDF:", pdfPath)
-		go indexPDFtoQdrant(sessionID, pdfPath)
+		indexPDFtoQdrant(sessionID, pdfPath)
 	} else if fileErr == nil {
 		fmt.Println("📄 Received uploaded PDF:", handler.Filename)
 		defer file.Close()
@@ -150,7 +147,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error writing PDF file: "+err.Error(), 500)
 			return
 		}
-		go indexPDFtoQdrant(sessionID, dstPath)
+		indexPDFtoQdrant(sessionID, dstPath)
 	} else {
 		http.Error(w, "No valid DOI or PDF provided", 400)
 		return
@@ -265,9 +262,11 @@ func indexPDFtoQdrant(sessionID, pdfPath string) {
 		"QDRANT_URL="+os.Getenv("QDRANT_URL"),
 	)
 
-	out, err := cmd.CombinedOutput()
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
 	if err != nil {
-		fmt.Println("❌ Error running model.py:", err, string(out))
+		fmt.Println("❌ Error running model.py:", err)
 		return
 	}
 

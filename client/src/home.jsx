@@ -49,12 +49,17 @@ function Home() {
         setLoading(true);
         try {
             const formData = new FormData();
-            formData.append('doi', doi);
-            formData.append('file', file);
+            if (doi && doi.trim() !== "") {
+                formData.append("doi", doi.trim());
+            } else if (file) {
+                formData.append("pdf", file); 
+            }
+            console.log("Submitting form data:", formData);
             const res = await fetch("http://localhost:8080/api/create-session", {
-                method: 'POST',
-                body: formData
+                method: "POST",
+                body: formData,
             });
+
             const data = await res.json();
             if (data.error === "max sessions reached") {
                 alert("Max sessions reached. Please try again later.");
@@ -89,7 +94,8 @@ function Home() {
                     className="border-2 border-light m-0 w-64 px-2 py-1 hover:bg-gray-800 hover:text-white" 
                     accept="application/pdf"
                     onChange={(e) => setFile(e.target.files[0])}/>
-                <button className="border-1 w-20 mt-5 mb-4 hover:bg-gray-400"
+                <button
+                    className={`border-1 w-20 mt-5 mb-4 ${loading ? 'bg-gray-400 text-white cursor-not-allowed' : 'hover:bg-gray-400'}`}
                     type="submit"
                     disabled={loading}
                     onClick={() => handleCreate()}>
