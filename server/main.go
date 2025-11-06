@@ -27,11 +27,19 @@ type Session struct {
     CreationDate  string `json:"creation_date"`
 }
 
+type ChatMessage struct {
+    Sender   string `json:"sender"`
+    Question string `json:"question"`
+    Time     string `json:"time"`
+    Response string `json:"response"`
+}
+
 func main() {
 	initRedis()
 	http.HandleFunc("/api/create-session", withCORS(handleCreateSession))
 	http.HandleFunc("/api/join-session", withCORS(handleJoinSession))
 	http.HandleFunc("/api/chat", withCORS(handleChat))
+	http.HandleFunc("/api/chat-history", withCORS(handleChatHistory))
 	fmt.Println("🚀 Server running on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		fmt.Printf("❌ Server failed to start: %v\n", err)
@@ -273,42 +281,124 @@ func indexPDFtoQdrant(sessionID, pdfPath string) {
 	fmt.Println("✅ PDF successfully embedded and stored in Qdrant for session", sessionID)
 }
 
+func storeMessage(sessionID string, msg ChatMessage) error {
+    // Fetch existing messages
+    existing, err := rdb.HGet(ctx, sessionID, "chats").Result()
+    if err != nil && err != redis.Nil {
+        return err
+    }
+
+    var messages []ChatMessage
+    if existing != "" {
+        json.Unmarshal([]byte(existing), &messages)
+    }
+
+    // Append the new message
+    messages = append(messages, msg)
+
+    // Marshal and store back
+    data, err := json.Marshal(messages)
+    if err != nil {
+        return err
+    }
+
+    return rdb.HSet(ctx, sessionID, "chats", data).Err()
+}
+
+func getChatHistory(sessionID string) ([]ChatMessage, error) {
+    val, err := rdb.HGet(ctx, sessionID, "chats").Result()
+    if err != nil && err != redis.Nil {
+        return nil, err
+    }
+    if val == "" {
+        return []ChatMessage{}, nil
+    }
+
+    var messages []ChatMessage
+    json.Unmarshal([]byte(val), &messages)
+    return messages, nil
+}
+
 func handleChat(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Content-Type", "application/json")
 
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-		return
-	}
+    if r.Method != http.MethodPost {
+        w.WriteHeader(http.StatusMethodNotAllowed)
+        json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+        return
+    }
 
-	var req struct {
-		SessionID string `json:"session_id"`
-		Question  string `json:"question"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" || req.Question == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
-		return
-	}
+    var req struct {
+        SessionID string `json:"session_id"`
+        Question  string `json:"question"`
+    }
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" || req.Question == "" {
+        w.WriteHeader(http.StatusBadRequest)
+        json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+        return
+    }
 
-	forwardReqBody, err := json.Marshal(req)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to marshal request"})
-		return
-	}
+    // Run the Python chat_api.py script directly, using the same pattern as indexPDFtoQdrant
+    fmt.Println("💬 Running chat_api.py for session:", req.SessionID)
+    cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/chat_api.py")
+    cmd.Env = append(os.Environ(),
+        "SESSION_ID="+req.SessionID,
+        "QUESTION="+req.Question,
+        "GEMINI_API_KEY="+os.Getenv("GEMINI_API_KEY"),
+        "QDRANT_URL="+os.Getenv("QDRANT_URL"),
+    )
+    var out bytes.Buffer
+    cmd.Stdout = &out
+    cmd.Stderr = &out
+    err := cmd.Run()
+    if err != nil {
+        fmt.Println("❌ Error running chat_api.py:", err)
+        fmt.Println("Output:", out.String())
+        http.Error(w, "Error executing chat service", 500)
+        return
+    }
 
-	// Simplified forward request
-	resp, err := http.Post("http://localhost:5000/chat", "application/json", bytes.NewReader(forwardReqBody))
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to contact chat service"})
-		return
-	}
-	defer resp.Body.Close()
+    fmt.Println("✅ chat_api.py executed successfully for session", req.SessionID)
+    fmt.Println("Python output:", out.String())
 
-	// Return response as-is
-	body, _ := io.ReadAll(resp.Body)
-	w.Write(body)
+    // Parse JSON returned by chat_api.py
+    var botResp struct {
+        Answer string `json:"answer"`
+    }
+    if err := json.Unmarshal(out.Bytes(), &botResp); err != nil {
+        fmt.Println("❌ Failed to parse bot response:", err)
+        http.Error(w, "Invalid bot response", 500)
+        return
+    }
+
+    // Store bot response in Redis
+    chatMsg := ChatMessage{
+		Sender:   "user",
+        Question: req.Question,
+        Time:     time.Now().Format(time.RFC3339),
+        Response: botResp.Answer,
+    }
+    storeMessage(req.SessionID, chatMsg)
+
+    // Send response to frontend
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(botResp)
+}
+
+func handleChatHistory(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+
+    sessionID := r.URL.Query().Get("session_id")
+    if sessionID == "" {
+        http.Error(w, "Missing session_id", 400)
+        return
+    }
+
+    messages, err := getChatHistory(sessionID)
+    if err != nil {
+        http.Error(w, "Failed to fetch chat history", 500)
+        return
+    }
+
+    json.NewEncoder(w).Encode(messages)
 }

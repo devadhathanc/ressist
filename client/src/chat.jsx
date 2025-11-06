@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useLocation } from "react-router";
 
 function Chat() {
@@ -9,16 +9,32 @@ function Chat() {
 
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
+
+  useEffect(() => {
+    if (!session_id) return;
+    fetch(`http://localhost:8080/api/chat-history?session_id=${session_id}`)
+      .then((res) => res.json())
+      .then((data) => {
+        // Map the fetched messages to include question and response fields
+        const mappedMessages = (data || []).map((msg) => ({
+          question: msg.question || "",
+          response: msg.response || "",
+        }));
+        setMessages(mappedMessages);
+      })
+      .catch((err) => console.error("Failed to fetch chat history:", err));
+  }, [session_id]);
+
   const sendMessage = async () => {
     if (!input.trim()) return;
 
     // Show user message immediately
-    const newMessages = [...messages, { sender: "user", text: input }];
+    const newMessages = [...messages, { question: input, response: "" }];
     setMessages(newMessages);
     setInput("");
 
     try {
-      const res = await fetch("http://localhost:9090/chat", {
+      const res = await fetch("http://localhost:8080/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -39,14 +55,20 @@ function Chat() {
       }
 
       setMessages([
-        ...newMessages,
-        { sender: "bot", text: data && data.answer ? data.answer : "No response from backend." },
+        ...newMessages.slice(0, -1),
+        {
+          question: newMessages[newMessages.length - 1].question,
+          response: data && data.answer ? data.answer : "No response from backend.",
+        },
       ]);
     } catch (err) {
       console.error(err);
       setMessages([
-        ...newMessages,
-        { sender: "bot", text: "⚠️ Failed to reach backend." },
+        ...newMessages.slice(0, -1),
+        {
+          question: newMessages[newMessages.length - 1].question,
+          response: "⚠️ Failed to reach backend.",
+        },
       ]);
     }
   };
@@ -74,21 +96,30 @@ function Chat() {
           ) : (
             <div className="flex flex-col">
               {messages.map((msg, i) => (
-                <div
-                  key={i}
-                  className={`my-2 p-2 rounded-lg inline-block max-w-[80%] break-words ${
-                    msg.sender === "user"
-                      ? "ml-auto bg-blue-600 text-white"
-                      : "mr-auto bg-gray-200 text-black"
-                  }`}
-                  dangerouslySetInnerHTML={{
-                    __html: msg.text
-                      .replace(/^###\s?(.*)$/gm, "<b>$1</b>")
-                      .replace(/\n/g, "<br>")
-                      .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
-                      .replace(/<\/b><br>/g, "</b><br><br>") // spacing after bold headers
-                  }}
-                />
+                <div key={i} className="mb-4 flex flex-col">
+                  {/* User question */}
+                  <div
+                    className="ml-auto bg-blue-600 text-white p-2 rounded-lg max-w-[70%] break-words"
+                    dangerouslySetInnerHTML={{
+                      __html: (msg.question || "")
+                        .replace(/^###\s?(.*)$/gm, "<b>$1</b>")
+                        .replace(/\n/g, "<br>")
+                        .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+                        .replace(/<\/b><br>/g, "</b><br><br>")
+                    }}
+                  />
+                  {/* Bot response */}
+                  <div
+                    className="mr-auto bg-gray-200 text-black p-2 rounded-lg max-w-[70%] break-words mt-1"
+                    dangerouslySetInnerHTML={{
+                      __html: (msg.response || "")
+                        .replace(/^###\s?(.*)$/gm, "<b>$1</b>")
+                        .replace(/\n/g, "<br>")
+                        .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+                        .replace(/<\/b><br>/g, "</b><br><br>")
+                    }}
+                  />
+                </div>
               ))}
             </div>
           )}
