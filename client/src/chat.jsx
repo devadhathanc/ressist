@@ -1,14 +1,15 @@
 import { useNavigate } from "react-router-dom";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router";
 
 function Chat() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { session_id, creation_date } = location.state || {};
+  const { session_id } = location.state || {};
 
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
+  const chatContainerRef = useRef(null);
 
   useEffect(() => {
     if (!session_id) return;
@@ -24,6 +25,19 @@ function Chat() {
       })
       .catch((err) => console.error("Failed to fetch chat history:", err));
   }, [session_id]);
+
+  useEffect(() => {
+    if (!chatContainerRef.current) return;
+    const container = chatContainerRef.current;
+    const threshold = 150; // px
+
+    const isNearBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+
+    if (isNearBottom) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [messages]);
 
   const sendMessage = async () => {
     if (!input.trim()) return;
@@ -75,20 +89,24 @@ function Chat() {
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
-      <header className="text-center py-5 border-b">
-        <h1 className="text-3xl font-mono">Session/{session_id}</h1>
-        <div className="flex justify-between mx-5 text-sm text-gray-600">
-          <button className="border solid rounded px-3 py-1 font-mono text-blue-500 hover:bg-blue-400 hover:text-white"
+      <header className="flex justify-between items-center text-center p-3 border-b">
+        <button className="border solid rounded px-3 py-1 font-mono text-blue-500 hover:bg-blue-400 hover:text-white"
             onClick={() => navigate("/")}>
               back
           </button>
-          <span>Created: {creation_date}</span>
-        </div>
+        <h1 className="text-3xl font-mono">
+          <span className="hidden sm:inline">Session/{session_id}</span>
+          <span className="inline sm:hidden">{session_id}</span>
+        </h1>
+        {/* <div className="flex justify-between mx-5 text-sm text-gray-600"> */}
+          
+          <span> Created by: #user</span>
+        {/* </div> */}
       </header>
 
       {/* Chat messages area */}
       <main className="flex-grow flex flex-col items-center p-4 overflow-y-auto">
-        <div className="w-full max-w-2xl h-[70vh] overflow-y-auto border rounded-lg bg-white shadow p-4">
+        <div ref={chatContainerRef} className="w-full max-w-2xl h-[80vh] overflow-y-auto border rounded-lg bg-white shadow p-4">
           {messages.length === 0 ? (
             <p className="text-gray-400 text-center mt-10">
               Ask something about the paper to get started!
@@ -98,27 +116,38 @@ function Chat() {
               {messages.map((msg, i) => (
                 <div key={i} className="mb-4 flex flex-col">
                   {/* User question */}
-                  <div
-                    className="ml-auto bg-blue-600 text-white p-2 rounded-lg max-w-[70%] break-words"
-                    dangerouslySetInnerHTML={{
-                      __html: (msg.question || "")
-                        .replace(/^###\s?(.*)$/gm, "<b>$1</b>")
-                        .replace(/\n/g, "<br>")
-                        .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
-                        .replace(/<\/b><br>/g, "</b><br><br>")
-                    }}
-                  />
+                  <div className="flex justify-end text-xs font-semibold text-gray-500">
+                      User
+                  </div>
+                  <div className="ml-auto bg-blue-600 text-white px-3 py-2 rounded-lg break-words inline-block max-w-[70%]">
+                    <div
+                      className="text-left"
+                      dangerouslySetInnerHTML={{
+                        __html: (msg.question || "")
+                          .replace(/^###\s?(.*)$/gm, "<b>$1</b>")
+                          .replace(/`([^`]+)`/g, "<code>$1</code>") 
+                          .replace(/\n/g, "<br>")
+                          .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+                          .replace(/<\/b><br>/g, "</b><br><br>")
+                      }}
+                    />
+                  </div>
                   {/* Bot response */}
-                  <div
-                    className="mr-auto bg-gray-200 text-black p-2 rounded-lg max-w-[70%] break-words mt-1"
-                    dangerouslySetInnerHTML={{
-                      __html: (msg.response || "")
-                        .replace(/^###\s?(.*)$/gm, "<b>$1</b>")
-                        .replace(/\n/g, "<br>")
-                        .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
-                        .replace(/<\/b><br>/g, "</b><br><br>")
-                    }}
-                  />
+                  <div className="text-xs font-semibold text-gray-500">
+                      Response
+                  </div>
+                  <div className="mr-auto border solid border-gray-300 text-black p-2 rounded-lg max-w-[95%] break-words mt-1">
+                    <div
+                      dangerouslySetInnerHTML={{
+                        __html: (msg.response || "fetching results ...")
+                          .replace(/^###\s?(.*)$/gm, "<b>$1</b>")
+                          .replace(/`([^`]+)`/g, "<code>$1</code>") 
+                          .replace(/\n/g, "<br>")
+                          .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+                          .replace(/<\/b><br>/g, "</b><br><br>")
+                      }}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
@@ -137,11 +166,11 @@ function Chat() {
               }
             }}
             placeholder="Ask about the paper..."
-            className="flex-grow border-2 border-gray-300 rounded-l-lg p-2 focus:outline-none"
+            className="flex-grow border-2 border-gray-300 rounded-3xl p-2 focus:outline-none mr-2"
           />
           <button
             onClick={sendMessage}
-            className="bg-blue-600 text-white px-4 rounded-r-lg hover:bg-blue-700"
+            className="bg-blue-600 text-white px-4 rounded-3xl hover:bg-blue-700"
           >
             Send
           </button>

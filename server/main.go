@@ -24,7 +24,6 @@ type Session struct {
     SessionID     string `json:"session_id"`
     ContainerName string `json:"container_name"`
     DOI           string `json:"doi"`
-    CreationDate  string `json:"creation_date"`
 }
 
 type ChatMessage struct {
@@ -40,6 +39,7 @@ func main() {
 	http.HandleFunc("/api/join-session", withCORS(handleJoinSession))
 	http.HandleFunc("/api/chat", withCORS(handleChat))
 	http.HandleFunc("/api/chat-history", withCORS(handleChatHistory))
+	http.HandleFunc("/api/active-sessions", withCORS(handleActiveSessions))
 	fmt.Println("🚀 Server running on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		fmt.Printf("❌ Server failed to start: %v\n", err)
@@ -102,13 +102,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	sessionID := now.Format("06011505")
 	containerName := "worker-" + sessionID
-	creationDate := now.Format("2006-01-02")
 
 	session := Session{
 		SessionID:     sessionID,
 		ContainerName: containerName,
 		DOI:           doi,
-		CreationDate:  creationDate,
 	}
 
 	key := sessionID
@@ -117,7 +115,6 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		"session_id":     session.SessionID,
 		"container_name": session.ContainerName,
 		"doi":            session.DOI,
-		"creation_date":  session.CreationDate,
 	}).Err()
 	if err != nil {
 		http.Error(w, "Failed to save session", 500)
@@ -161,7 +158,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write([]byte(fmt.Sprintf(`{"session_id": "%s", "creation_date" : "%s"}`, sessionID, now.Format("2006-01-02"))))
+	w.Write([]byte(fmt.Sprintf(`{"session_id": "%s"}`, sessionID)))
 }
 
 func handleJoinSession(w http.ResponseWriter, r *http.Request) {
@@ -303,6 +300,36 @@ func storeMessage(sessionID string, msg ChatMessage) error {
     }
 
     return rdb.HSet(ctx, sessionID, "chats", data).Err()
+}
+func handleActiveSessions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get all active session IDs
+	sessionIDs, err := rdb.SMembers(ctx, "active_sessions").Result()
+	if err != nil {
+		http.Error(w, "Failed to fetch active sessions", 500)
+		return
+	}
+	var sessions []map[string]interface{}
+	for _, id := range sessionIDs {
+		data, err := rdb.HGetAll(ctx, id).Result()
+		if err != nil || len(data) == 0 {
+			continue // skip if failed or missing
+		}
+		ttl, err := rdb.TTL(ctx, id).Result()
+		if err != nil {
+			ttl = 0
+		}
+
+		sessions = append(sessions, map[string]interface{}{
+			"session_id":  data["session_id"],
+			"ttl_seconds": int(ttl.Seconds()),
+		})
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"sessions": sessions,
+	})
 }
 
 func getChatHistory(sessionID string) ([]ChatMessage, error) {
