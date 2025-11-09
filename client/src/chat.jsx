@@ -1,6 +1,8 @@
 import { useNavigate } from "react-router-dom";
 import React, { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 function Chat() {
   const navigate = useNavigate();
@@ -98,15 +100,14 @@ function Chat() {
           <span className="hidden sm:inline">Session/{session_id}</span>
           <span className="inline sm:hidden">{session_id}</span>
         </h1>
-        {/* <div className="flex justify-between mx-5 text-sm text-gray-600"> */}
-          
+        
           <span> Created by: #user</span>
-        {/* </div> */}
+        
       </header>
 
       {/* Chat messages area */}
       <main className="flex-grow flex flex-col items-center p-4 overflow-y-auto">
-        <div ref={chatContainerRef} className="w-full max-w-2xl h-[80vh] overflow-y-auto border rounded-lg bg-white shadow p-4">
+        <div ref={chatContainerRef} className="w-full max-w-3xl h-[80vh] overflow-y-auto border rounded-lg bg-white shadow p-4">
           {messages.length === 0 ? (
             <p className="text-gray-400 text-center mt-10">
               Ask something about the paper to get started!
@@ -119,34 +120,28 @@ function Chat() {
                   <div className="flex justify-end text-xs font-semibold text-gray-500">
                       User
                   </div>
-                  <div className="ml-auto bg-blue-600 text-white px-3 py-2 rounded-lg break-words inline-block max-w-[70%]">
-                    <div
-                      className="text-left"
-                      dangerouslySetInnerHTML={{
-                        __html: (msg.question || "")
-                          .replace(/^###\s?(.*)$/gm, "<b>$1</b>")
-                          .replace(/`([^`]+)`/g, "<code>$1</code>") 
-                          .replace(/\n/g, "<br>")
-                          .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
-                          .replace(/<\/b><br>/g, "</b><br><br>")
-                      }}
-                    />
+                  <div className="ml-auto bg-blue-600 text-white px-3 py-2 rounded-lg break-words max-w-[70%]">
+                    <div className="text-left">
+                      {msg.question}
+                    </div>
                   </div>
                   {/* Bot response */}
                   <div className="text-xs font-semibold text-gray-500">
                       Response
                   </div>
-                  <div className="mr-auto border solid border-gray-300 text-black p-2 rounded-lg max-w-[95%] break-words mt-1">
-                    <div
-                      dangerouslySetInnerHTML={{
-                        __html: (msg.response || "fetching results ...")
-                          .replace(/^###\s?(.*)$/gm, "<b>$1</b>")
-                          .replace(/`([^`]+)`/g, "<code>$1</code>") 
-                          .replace(/\n/g, "<br>")
-                          .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
-                          .replace(/<\/b><br>/g, "</b><br><br>")
-                      }}
-                    />
+                  <div className="mr-auto border solid border-gray-300 text-black p-2 rounded-lg max-w-[95%] mt-1 block">
+                    <div className="prose break-words">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          ol: ({node, ...props}) => <ol className="list-decimal ml-6" {...props} />,
+                          ul: ({node, ...props}) => <ul className="list-disc ml-6" {...props} />,
+                          li: ({node, ...props}) => <li className="mb-1" {...props} />,
+                        }}
+                      >
+                        {msg.response || "fetching results ..."}
+                      </ReactMarkdown>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -166,7 +161,7 @@ function Chat() {
               }
             }}
             placeholder="Ask about the paper..."
-            className="flex-grow border-2 border-gray-300 rounded-3xl p-2 focus:outline-none mr-2"
+            className="flex-grow border-2 border-gray-300 rounded-3xl p-2 px-5 focus:outline-none mr-2"
           />
           <button
             onClick={sendMessage}
