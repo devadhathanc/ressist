@@ -63,16 +63,9 @@ func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// func canCreateSession() (bool, error) {
-//     keys, err := rdb.Keys(ctx, "*").Result() // or use SCAN for large DB
-// 	fmt.Println("Current active sessions:", keys)
-//     if err != nil {
-//         return false, err
-//     }
-//     return len(keys) < 10, nil
-// }
-
 func initRedis() {
+	// docker version 1/4
+	// _ = godotenv.Load(".env")
 	_ = godotenv.Load("../.env")
 	opt, _ := redis.ParseURL(os.Getenv("REDIS_URL"))
 	rdb = redis.NewClient(opt)
@@ -81,7 +74,7 @@ func initRedis() {
 	}
 }
 
-// No cleanup goroutine needed; rely on Redis TTL expiration.
+
 
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -110,9 +103,8 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := sessionID
-	// Store session as Redis hash
 
-	//docker version
+	//docker version 2/4
 	// sessionDir := "/app/sessions"
 	sessionDir := "sessions"
 	os.MkdirAll(sessionDir, 0755)
@@ -290,15 +282,12 @@ func indexPDFtoQdrant(sessionID, pdfPath string, jsonResponse string) {
 	envVars := []string{
 		"SESSION_ID=" + sessionID,
 		"PDF_PATH=" + pdfPath,
-		// "GEMINI_API_KEY=" + os.Getenv("GEMINI_API_KEY"),
-		// "QDRANT_URL=" + os.Getenv("QDRANT_URL"),
-		// "QDRANT_API_KEY=" + os.Getenv("QDRANT_API_KEY"),
 		"UNPAYWALL_JSON="+jsonResponse,
 	}
 	
 	cmd.Env = append(os.Environ(), envVars...)
 
-	//docker version
+	//docker version 3/4
 
 	// containerPDFPath := fmt.Sprintf("/app/sessions/%s.pdf", sessionID)
 
@@ -306,8 +295,7 @@ func indexPDFtoQdrant(sessionID, pdfPath string, jsonResponse string) {
 	// 	"docker", "exec",
 	// 	"-e", "SESSION_ID="+sessionID,
 	// 	"-e", "PDF_PATH="+containerPDFPath,
-	// 	"-e", "GEMINI_API_KEY="+os.Getenv("GEMINI_API_KEY"),
-	// 	"-e", "QDRANT_URL="+os.Getenv("QDRANT_URL"),
+	// 	"-e", "UNPAYWALL_JSON="+jsonResponse,
 	// 	"qdrant-worker",
 	// 	"python", "/app/model.py",
 	// )
@@ -409,7 +397,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Run the Python chat_api.py script directly, using the same pattern as indexPDFtoQdrant
+
     fmt.Println("💬 Running chat_api.py for session:", req.SessionID)
     cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/chat_api.py")
 	
@@ -418,14 +406,12 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
         "QUESTION="+req.Question,
     )
 
-	//docker version
+	//docker version 4/4
 
 	// cmd := exec.Command(
 	// 	"docker", "exec",
 	// 	"-e", "SESSION_ID="+req.SessionID,
-	// 	"-e", "QUESTION="+req.Question,	
-	// 	"-e", "GEMINI_API_KEY="+os.Getenv("GEMINI_API_KEY"),
-	// 	"-e", "QDRANT_URL="+os.Getenv("QDRANT_URL"),
+	// 	"-e", "QUESTION="+req.Question,
 	// 	"qdrant-worker",
 	// 	"python", "/app/chat_api.py",
 	// 	)
@@ -494,7 +480,7 @@ func handleChatHistory(w http.ResponseWriter, r *http.Request) {
 
 func cleanupExpiredSessions() {
 	for {
-		time.Sleep(1 * time.Minute)
+		time.Sleep(5 * time.Minute)
 
 		sessionIDs, _ := rdb.Keys(ctx, "*").Result()
 		sessionsJSON, _ := json.Marshal(sessionIDs)

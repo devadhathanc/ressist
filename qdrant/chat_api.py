@@ -36,7 +36,7 @@ if __name__ == "__main__":
         collection_name=session_id,
         query=question_vector,
         limit=3
-    )
+    )   
 
     retrieved_context = "\n\n".join([
         hit.payload.get("text","") for hit in search_result.points
