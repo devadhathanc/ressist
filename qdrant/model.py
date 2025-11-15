@@ -30,6 +30,10 @@ docs = loader.load()
 
 splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 chunks = splitter.split_documents(docs)
+chunks.append(
+    # Add Unpaywall JSON as a separate chunk if provided
+    type('Doc', (object,), {'page_content': UNPAYWALL_JSON})()
+) if UNPAYWALL_JSON else None
 
 
 print(f"🧩 Created {len(chunks)} text chunks from PDF.")
@@ -54,28 +58,26 @@ if not qdrant.collection_exists(SESSION_ID):
 print("⚙️ Generating embeddings and uploading to Qdrant...")
 vectors = embeddings.embed_documents([chunk.page_content for chunk in chunks])
 
-myPoints=[
-    models.PointStruct(
-        id=i,
-        vector=vectors[i],
-        payload={"text": chunks[i].page_content,
-                # "unpaywall": json.loads(UNPAYWALL_JSON) if i == 0 and UNPAYWALL_JSON else None
-                }
-    )
-    for i in range(len(chunks))
-]
-if UNPAYWALL_JSON:
-    myPoints.append(
-        models.PointStruct(
-            id=len(chunks),  # unique ID
-            vector=[0.0]*384,  # dummy vector (or some special vector)
-            payload={"unpaywall": json.loads(UNPAYWALL_JSON)}
-        )
-    )
+
+# if UNPAYWALL_JSON:
+#     myPoints.append(
+#         models.PointStruct(
+#             id=len(chunks),  # unique ID
+#             vector=[0.0]*384,  # dummy vector (or some special vector)
+#             payload={"text": json.loads(UNPAYWALL_JSON)}
+#         )
+#     )
 
 qdrant.upload_points(
     collection_name=SESSION_ID,
-    points=myPoints
+    points=[
+        models.PointStruct(
+            id=i,
+            vector=vectors[i],
+            payload={"text": chunks[i].page_content}
+        )
+        for i in range(len(chunks))
+    ]
 )
 
 print(f"✅ Successfully stored {len(chunks)} text chunks in Qdrant collection '{SESSION_ID}'.")
@@ -86,10 +88,10 @@ print(f"🗑️ Deleted PDF file '{PDF_PATH}' after embedding.")
 
 # --- Auto Delete Session Collection after Time Limit ---
 
-def auto_delete_collection():
-    print(f"🕒 Collection '{SESSION_ID}' will be deleted after 3600 seconds...")
-    time.sleep(3600)
-    qdrant.delete_collection(SESSION_ID)
-    print(f"🗑️ Collection '{SESSION_ID}' has been automatically deleted after timeout.")
+# def auto_delete_collection():
+#     print(f"🕒 Collection '{SESSION_ID}' will be deleted after 3600 seconds...")
+#     time.sleep(3600)
+#     qdrant.delete_collection(SESSION_ID)
+#     print(f"🗑️ Collection '{SESSION_ID}' has been automatically deleted after timeout.")
 
-threading.Thread(target=auto_delete_collection, daemon=True).start()
+# threading.Thread(target=auto_delete_collection, daemon=True).start()

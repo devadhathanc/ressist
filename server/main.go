@@ -42,7 +42,7 @@ func main() {
 	http.HandleFunc("/api/chat", withCORS(handleChat))
 	http.HandleFunc("/api/chat-history", withCORS(handleChatHistory))
 	http.HandleFunc("/api/active-sessions", withCORS(handleActiveSessions))
-	// go cleanupExpiredSessions()
+	go cleanupExpiredSessions()
 	fmt.Println("🚀 Server running on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		fmt.Printf("❌ Server failed to start: %v\n", err)
@@ -494,25 +494,19 @@ func handleChatHistory(w http.ResponseWriter, r *http.Request) {
 
 func cleanupExpiredSessions() {
 	for {
-		time.Sleep(5 * time.Minute)
+		time.Sleep(1 * time.Minute)
 
 		sessionIDs, _ := rdb.Keys(ctx, "*").Result()
-		for _, id := range sessionIDs {
-			ttl, _ := rdb.TTL(ctx, id).Result()
-			if ttl <= 0 {
-				fmt.Println("🧹 Deleting expired Qdrant collection:", id)
+		sessionsJSON, _ := json.Marshal(sessionIDs)
 
-				cmd := exec.Command(
-					"/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python",
-					"../qdrant/delete_collection.py",
-					id,
-				)
+		cmd := exec.Command(	
+			"/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python",
+			"../qdrant/delete_collection.py",
+			string(sessionsJSON),
+		)
 
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				cmd.Run()
-
-			}
-		}
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Run()
 	}
 }

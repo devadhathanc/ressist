@@ -127,7 +127,8 @@ function Home() {
                                 return (
                                 <li
                                     key={session.session_id}
-                                    className="border p-2 w-50 rounded hover:bg-gray-200 cursor-pointer"
+                                    className={`border p-2 w-50 rounded cursor-pointer ${loading ? "opacity-50 pointer-events-none" : "hover:bg-gray-200"}`}
+                                    disabled={loading}
                                     onClick={() =>
                                     navigate(`/chat/${session.session_id}`,{
                                         state: {

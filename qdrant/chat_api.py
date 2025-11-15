@@ -39,7 +39,7 @@ if __name__ == "__main__":
     )
 
     retrieved_context = "\n\n".join([
-        hit.payload.get("text", "") for hit in search_result.points
+        hit.payload.get("text","") for hit in search_result.points
         if hasattr(hit, "payload") and "text" in hit.payload
     ])
 
