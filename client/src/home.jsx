@@ -65,7 +65,13 @@ function Home() {
                 alert("Max sessions reached. Please try again later.");
                 return;
             }
-            navigate("/chat" , {state:{title : "Session Chat", session_id :data.session_id}});
+            console.log("Session created:", data);
+            navigate(`/chat/${data.session_id}`, {
+                state:{
+                    session_id: data.session_id,
+                }
+            }
+            )
         } finally {
             setLoading(false);
             setText("Assistant Here");
@@ -113,7 +119,7 @@ function Home() {
                     {activeSessions.length === 0 ? (
                         <p>No active sessions.</p>
                     ) : (
-                        <ul className="flex flex-col sm:flex-row gap-2">
+                        <ul className="flex flex-col flex-wrap sm:flex-row gap-2">
                             {activeSessions.map((session) => {
                                 const minutes = Math.floor(session.ttl_seconds / 60);
                                 const seconds = session.ttl_seconds % 60;
@@ -123,9 +129,8 @@ function Home() {
                                     key={session.session_id}
                                     className="border p-2 w-50 rounded hover:bg-gray-200 cursor-pointer"
                                     onClick={() =>
-                                    navigate("/chat", {
+                                    navigate(`/chat/${session.session_id}`,{
                                         state: {
-                                        title: "Session Chat",
                                         session_id: session.session_id,
                                         },
                                     })

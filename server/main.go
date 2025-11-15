@@ -22,8 +22,10 @@ var (
 )
 type Session struct {
     SessionID     string `json:"session_id"`
-    ContainerName string `json:"container_name"`
     DOI           string `json:"doi"`
+    Title         string `json:"title"`
+    Journal       string `json:"journal"`
+	JsonResponse  string `json:"json_response"`
 }
 
 type ChatMessage struct {
@@ -40,6 +42,7 @@ func main() {
 	http.HandleFunc("/api/chat", withCORS(handleChat))
 	http.HandleFunc("/api/chat-history", withCORS(handleChatHistory))
 	http.HandleFunc("/api/active-sessions", withCORS(handleActiveSessions))
+	// go cleanupExpiredSessions()
 	fmt.Println("🚀 Server running on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		fmt.Printf("❌ Server failed to start: %v\n", err)
@@ -60,13 +63,14 @@ func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func canCreateSession() (bool, error) {
-	count, err := rdb.SCard(ctx, "active_sessions").Result()
-	if err != nil {
-		return false, err
-	}
-	return count < 10, nil
-}
+// func canCreateSession() (bool, error) {
+//     keys, err := rdb.Keys(ctx, "*").Result() // or use SCAN for large DB
+// 	fmt.Println("Current active sessions:", keys)
+//     if err != nil {
+//         return false, err
+//     }
+//     return len(keys) < 10, nil
+// }
 
 func initRedis() {
 	_ = godotenv.Load("../.env")
@@ -81,19 +85,17 @@ func initRedis() {
 
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-
-	ok, err := canCreateSession()
+	keys,err := rdb.Keys(ctx, "*").Result()
 	if err != nil {
 		http.Error(w, "Redis error", 500)
 		return
 	}
-	if !ok {
+	if len(keys) >= 10 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(429)
 		json.NewEncoder(w).Encode(map[string]string{"error": "max sessions reached"})
 		return
 	}
-	
 	r.ParseMultipartForm(10 << 20) // 10MB max
 	doi := r.FormValue("doi")
 	file, handler, fileErr := r.FormFile("pdf")
@@ -101,64 +103,68 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// Generate session ID as YYMMHHSS
 	now := time.Now()
 	sessionID := now.Format("06011505")
-	containerName := "worker-" + sessionID
 
 	session := Session{
 		SessionID:     sessionID,
-		ContainerName: containerName,
 		DOI:           doi,
 	}
 
 	key := sessionID
 	// Store session as Redis hash
-	err = rdb.HSet(ctx, key, map[string]interface{}{
-		"session_id":     session.SessionID,
-		"container_name": session.ContainerName,
-		"doi":            session.DOI,
-	}).Err()
-	if err != nil {
-		http.Error(w, "Failed to save session", 500)
-		return
-	}
-	// Add to active_sessions set and set TTL for both hash and set membership
-	rdb.SAdd(ctx, "active_sessions", sessionID)
-	rdb.Expire(ctx, key, time.Hour)
-	rdb.Expire(ctx, "active_sessions", time.Hour)
 
-	sessionDir := filepath.Join("sessions", sessionID)
+	//docker version
+	// sessionDir := "/app/sessions"
+	sessionDir := "sessions"
 	os.MkdirAll(sessionDir, 0755)
-
 	if doi != "" {
-		pdfPath, err := fetchPDFByDOI(doi, sessionDir)
+		pdfPath, title, journal, jsonResponse, err := fetchPDFByDOI(doi, sessionDir, sessionID)
 		if err != nil {
+			fmt.Println("❌ Failed to fetch PDF from DOI:", err)
 			http.Error(w, "Failed to fetch PDF from DOI: "+err.Error(), 400)
 			return
 		}
+		session.Title = title
+		session.Journal = journal
+		session.JsonResponse = jsonResponse
 		fmt.Println("📄 Downloaded PDF:", pdfPath)
-		indexPDFtoQdrant(sessionID, pdfPath)
+		indexPDFtoQdrant(sessionID, pdfPath, session.JsonResponse)
 	} else if fileErr == nil {
 		fmt.Println("📄 Received uploaded PDF:", handler.Filename)
 		defer file.Close()
-		dstPath := filepath.Join(sessionDir, handler.Filename)
+		dstPath := filepath.Join(sessionDir, sessionID+".pdf")
+		fmt.Println("💾 Preparing to save uploaded PDF to:", dstPath)
 		dst, err := os.Create(dstPath)
 		if err != nil {
 			http.Error(w, "Failed to save uploaded PDF: "+err.Error(), 500)
 			return
 		}
 		defer dst.Close()
-
 		_, err = io.Copy(dst, file)
 		if err != nil {
 			http.Error(w, "Error writing PDF file: "+err.Error(), 500)
 			return
 		}
-		indexPDFtoQdrant(sessionID, dstPath)
+		indexPDFtoQdrant(sessionID, dstPath, "")
 	} else {
 		http.Error(w, "No valid DOI or PDF provided", 400)
 		return
 	}
 
-	w.Write([]byte(fmt.Sprintf(`{"session_id": "%s"}`, sessionID)))
+	err = rdb.HSet(ctx, key, map[string]interface{}{
+		"session_id":     session.SessionID,
+		"doi":            session.DOI,
+		"title":          session.Title,
+		"journal":        session.Journal,
+		"json_response":  session.JsonResponse,
+	}).Err()
+	if err != nil {
+		http.Error(w, "Failed to save session", 500)
+		return
+	}
+
+	rdb.Expire(ctx, key, time.Hour)
+
+	w.Write([]byte(fmt.Sprintf(`{"session_id": "%s", "title": "%s", "journal" : "%s"}`, sessionID, session.Title, session.Journal)))
 }
 
 func handleJoinSession(w http.ResponseWriter, r *http.Request) {
@@ -202,71 +208,109 @@ func handleJoinSession(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(sessionData)
 }
 
-func fetchPDFByDOI(doi, sessionDir string) (string, error) {
+func fetchPDFByDOI(doi, sessionDir ,sessionID string) (string, string, string, string, error) {
 	type UnpaywallResponse struct {
+		OpenAccess bool `json:"is_oa"`
+		Title      string `json:"title"`
+		Journal    string `json:"journal_name"`	
 		BestOA struct {
 			URLForPDF string `json:"url_for_pdf"`
 		} `json:"best_oa_location"`
+		RawJSON json.RawMessage `json:"-"`
 	}
 
 	apiURL := fmt.Sprintf("https://api.unpaywall.org/v2/%s?email=tester@ressist.com", doi)
 	resp, err := http.Get(apiURL)
 	if err != nil {
-		return "", fmt.Errorf("error fetching metadata from Unpaywall: %v", err)
+		return "", "", "", "", fmt.Errorf("error fetching metadata from Unpaywall: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("Unpaywall API returned status %d", resp.StatusCode)
+		return "", "", "", "", fmt.Errorf("Unpaywall API returned status %d", resp.StatusCode)
 	}
 
 	var data UnpaywallResponse
-	err = json.NewDecoder(resp.Body).Decode(&data)
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("error decoding Unpaywall response: %v", err)
+		return "", "", "", "", fmt.Errorf("error reading Unpaywall response body: %v", err)
+	}
+
+	err = json.Unmarshal(bodyBytes, &data)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("error decoding Unpaywall response: %v", err)
+	}
+
+	data.RawJSON = json.RawMessage(bodyBytes)
+
+	if !data.OpenAccess {
+		return "", "", "", "", fmt.Errorf("No Open Access available for this paper")
 	}
 
 	pdfURL := data.BestOA.URLForPDF
 	if pdfURL == "" {
-		return "", fmt.Errorf("No Open Access available for this paper")
+		return "", "", "", "", fmt.Errorf("No PDF available for this paper")
 	}
 
 	pdfResp, err := http.Get(pdfURL)
 	if err != nil {
-		return "", fmt.Errorf("error downloading PDF: %v", err)
+		return "", "", "", "", fmt.Errorf("error downloading PDF: %v", err)
 	}
 	defer pdfResp.Body.Close()
 
 	if pdfResp.StatusCode != 200 {
-		return "", fmt.Errorf("PDF download returned status %d", pdfResp.StatusCode)
+		return "", "", "", "", fmt.Errorf("PDF download returned status %d", pdfResp.StatusCode)
 	}
 
-	filePath := filepath.Join(sessionDir, "paper.pdf")
+	filePath := sessionDir + "/" + sessionID + ".pdf"
 	outFile, err := os.Create(filePath)
 	if err != nil {
-		return "", fmt.Errorf("error creating PDF file: %v", err)
+		return "", "", "", "", fmt.Errorf("error creating PDF file: %v", err)
 	}
 	defer outFile.Close()
 
 	_, err = io.Copy(outFile, pdfResp.Body)
 	if err != nil {
-		return "", fmt.Errorf("error saving PDF file: %v", err)
+		return "", "", "", "", fmt.Errorf("error saving PDF file: %v", err)
+	}
+	fmt.Println("💾 PDF saved to:", filePath)
+
+	rawJSON, err := json.Marshal(data)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("error marshaling Unpaywall response: %v", err)
 	}
 
-	return filePath, nil
+	return filePath, data.Title, data.Journal, string(rawJSON), nil
 }
 
-func indexPDFtoQdrant(sessionID, pdfPath string) {
+func indexPDFtoQdrant(sessionID, pdfPath string, jsonResponse string) {
 	fmt.Println("🧠 Indexing PDF into Qdrant for session:", sessionID)
 
 	cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/model.py")
-	cmd.Env = append(os.Environ(),
-		"SESSION_ID="+sessionID,
-		"PDF_PATH="+pdfPath,
-		"GEMINI_API_KEY="+os.Getenv("GEMINI_API_KEY"),
-		"QDRANT_URL="+os.Getenv("QDRANT_URL"),
-	)
+	envVars := []string{
+		"SESSION_ID=" + sessionID,
+		"PDF_PATH=" + pdfPath,
+		// "GEMINI_API_KEY=" + os.Getenv("GEMINI_API_KEY"),
+		// "QDRANT_URL=" + os.Getenv("QDRANT_URL"),
+		// "QDRANT_API_KEY=" + os.Getenv("QDRANT_API_KEY"),
+		"UNPAYWALL_JSON="+jsonResponse,
+	}
+	
+	cmd.Env = append(os.Environ(), envVars...)
 
+	//docker version
+
+	// containerPDFPath := fmt.Sprintf("/app/sessions/%s.pdf", sessionID)
+
+	// cmd := exec.Command(
+	// 	"docker", "exec",
+	// 	"-e", "SESSION_ID="+sessionID,
+	// 	"-e", "PDF_PATH="+containerPDFPath,
+	// 	"-e", "GEMINI_API_KEY="+os.Getenv("GEMINI_API_KEY"),
+	// 	"-e", "QDRANT_URL="+os.Getenv("QDRANT_URL"),
+	// 	"qdrant-worker",
+	// 	"python", "/app/model.py",
+	// )
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
@@ -305,7 +349,7 @@ func handleActiveSessions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	// Get all active session IDs
-	sessionIDs, err := rdb.SMembers(ctx, "active_sessions").Result()
+	sessionIDs, err := rdb.Keys(ctx, "*").Result()
 	if err != nil {
 		http.Error(w, "Failed to fetch active sessions", 500)
 		return
@@ -368,12 +412,25 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
     // Run the Python chat_api.py script directly, using the same pattern as indexPDFtoQdrant
     fmt.Println("💬 Running chat_api.py for session:", req.SessionID)
     cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/chat_api.py")
+	
     cmd.Env = append(os.Environ(),
-        "SESSION_ID="+req.SessionID,
+        "SESSION_ID="+req.SessionID,	
         "QUESTION="+req.Question,
-        "GEMINI_API_KEY="+os.Getenv("GEMINI_API_KEY"),
-        "QDRANT_URL="+os.Getenv("QDRANT_URL"),
     )
+
+	//docker version
+
+	// cmd := exec.Command(
+	// 	"docker", "exec",
+	// 	"-e", "SESSION_ID="+req.SessionID,
+	// 	"-e", "QUESTION="+req.Question,	
+	// 	"-e", "GEMINI_API_KEY="+os.Getenv("GEMINI_API_KEY"),
+	// 	"-e", "QDRANT_URL="+os.Getenv("QDRANT_URL"),
+	// 	"qdrant-worker",
+	// 	"python", "/app/chat_api.py",
+	// 	)
+
+	
     var out bytes.Buffer
     cmd.Stdout = &out
     cmd.Stderr = &out
@@ -386,7 +443,6 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
     }
 
     fmt.Println("✅ chat_api.py executed successfully for session", req.SessionID)
-    fmt.Println("Python output:", out.String())
 
     // Parse JSON returned by chat_api.py
     var botResp struct {
@@ -414,18 +470,49 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 
 func handleChatHistory(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "application/json")
-
+	
     sessionID := r.URL.Query().Get("session_id")
     if sessionID == "" {
         http.Error(w, "Missing session_id", 400)
         return
     }
-
     messages, err := getChatHistory(sessionID)
     if err != nil {
         http.Error(w, "Failed to fetch chat history", 500)
         return
     }
+	title, _ := rdb.HGet(ctx, sessionID, "title").Result()
+    journal, _ := rdb.HGet(ctx, sessionID, "journal").Result()
+    response := map[string]interface{}{
+        "title":    title,
+        "journal":  journal,
+        "messages": messages,
+    }
 
-    json.NewEncoder(w).Encode(messages)
+    json.NewEncoder(w).Encode(response)
+}
+
+func cleanupExpiredSessions() {
+	for {
+		time.Sleep(5 * time.Minute)
+
+		sessionIDs, _ := rdb.Keys(ctx, "*").Result()
+		for _, id := range sessionIDs {
+			ttl, _ := rdb.TTL(ctx, id).Result()
+			if ttl <= 0 {
+				fmt.Println("🧹 Deleting expired Qdrant collection:", id)
+
+				cmd := exec.Command(
+					"/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python",
+					"../qdrant/delete_collection.py",
+					id,
+				)
+
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				cmd.Run()
+
+			}
+		}
+	}
 }

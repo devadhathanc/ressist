@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import React, { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router";
 import ReactMarkdown from "react-markdown";
@@ -7,7 +8,9 @@ import remarkGfm from "remark-gfm";
 function Chat() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { session_id } = location.state || {};
+  const { session_id } = useParams();
+  const [title, setTitle] = useState(location.state?.title || "PDF Uploaded");
+  const [journal, setJournal] = useState(location.state?.journal || "General");
 
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
@@ -15,14 +18,18 @@ function Chat() {
 
   useEffect(() => {
     if (!session_id) return;
+
     fetch(`http://localhost:8080/api/chat-history?session_id=${session_id}`)
       .then((res) => res.json())
       .then((data) => {
-        // Map the fetched messages to include question and response fields
-        const mappedMessages = (data || []).map((msg) => ({
+        const mappedMessages = (data.messages || []).map((msg) => ({
           question: msg.question || "",
           response: msg.response || "",
         }));
+
+        if (data.title) setTitle(data.title);
+        if (data.journal) setJournal(data.journal);
+
         setMessages(mappedMessages);
       })
       .catch((err) => console.error("Failed to fetch chat history:", err));
@@ -91,22 +98,24 @@ function Chat() {
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
-      <header className="flex justify-between items-center text-center p-3 border-b">
-        <button className="border solid rounded px-3 py-1 font-mono text-blue-500 hover:bg-blue-400 hover:text-white"
-            onClick={() => navigate("/")}>
-              back
-          </button>
-        <h1 className="text-3xl font-mono">
+      <header className="flex items-center justify-between p-3 border-b w-full">
+        <button
+          className="border solid rounded py-1 px-3 font-mono text-blue-500 hover:bg-blue-400 hover:text-white"
+          onClick={() => navigate("/")}
+        >
+          back
+        </button>
+
+        <h1 className="text-3xl font-mono text-center">
           <span className="hidden sm:inline">Session/{session_id}</span>
           <span className="inline sm:hidden">{session_id}</span>
         </h1>
-        
-          <span> Created by: #user</span>
-        
+        <img src="/cap1.png" className="h-[36px]" />
       </header>
 
       {/* Chat messages area */}
-      <main className="flex-grow flex flex-col items-center p-4 overflow-y-auto">
+      <div className="flex flex-row">
+      <main className="flex-grow flex flex-col p-4 items-center lg:items-start overflow-y-auto">
         <div ref={chatContainerRef} className="w-full max-w-3xl h-[80vh] overflow-y-auto border rounded-lg bg-white shadow p-4">
           {messages.length === 0 ? (
             <p className="text-gray-400 text-center mt-10">
@@ -130,7 +139,7 @@ function Chat() {
                       Response
                   </div>
                   <div className="mr-auto border solid border-gray-300 text-black p-2 rounded-lg max-w-[95%] mt-1 block">
-                    <div className="prose break-words">
+                    <div className="prose break-words overflow-x-auto">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
@@ -171,6 +180,13 @@ function Chat() {
           </button>
         </div>
       </main>
+
+      <div className="hidden lg:flex flex-col flex-wrap justify-center items-end w-[30%] mx-4">
+        <h2 className="text-lg italic text-gray-500">&lt;{journal}&gt;</h2>
+        <h1 className="text-5xl font-bold text-wrap text-right text-black">{title}</h1>
+      </div>
+      </div>
+      
     </div>
   );
 }

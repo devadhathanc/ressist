@@ -1,0 +1,65 @@
+version: "3.9"
+
+services:
+  client:
+    build: ./client
+    container_name: ressist-client
+    ports:
+      - "5173:5173"
+    working_dir: /usr/src/app
+    volumes:
+      - ./client:/usr/src/app
+      - /usr/src/app/node_modules
+    command: npm run dev
+    depends_on:
+      - server
+    networks:
+      - ressist_net
+
+  server:
+    build: ./server
+    container_name: ressist-server
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_URL=${REDIS_URL}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - QDRANT_URL=http://qdrant:6333
+    env_file:
+      - .env
+    volumes:
+      - ./server:/app
+      - pdf_storage:/app/sessions
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - qdrant-worker
+      - qdrant
+    networks:
+      - ressist_net
+
+  qdrant-worker:
+    build: ./qdrant
+    container_name: qdrant-worker
+    volumes:
+      - ./qdrant:/app
+      - pdf_storage:/app/sessions
+    command: tail -f /dev/null
+    networks:
+      - ressist_net
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+    networks:
+      - ressist_net
+    restart: unless-stopped
+
+volumes:
+  pdf_storage:
+
+networks:
+  ressist_net:
+    driver: bridge

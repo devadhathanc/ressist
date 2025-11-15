@@ -2,6 +2,7 @@ import os
 import time
 import threading
 import shutil
+import json
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -9,12 +10,13 @@ from langchain_community.vectorstores import Qdrant
 from langchain_huggingface import HuggingFaceEmbeddings
 
 load_dotenv()
-
 # --- Environment Variables ---
 SESSION_ID = os.getenv("SESSION_ID", "default")
 PDF_PATH = os.getenv("PDF_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+UNPAYWALL_JSON = os.getenv("UNPAYWALL_JSON")
 
 if not PDF_PATH or not os.path.exists(PDF_PATH):
     print(f"❌ PDF file not found at {PDF_PATH}")
@@ -29,6 +31,7 @@ docs = loader.load()
 splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 chunks = splitter.split_documents(docs)
 
+
 print(f"🧩 Created {len(chunks)} text chunks from PDF.")
 
 # --- Create Embeddings ---
@@ -38,38 +41,48 @@ embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-
 # --- Store in Qdrant ---
 from qdrant_client import QdrantClient, models
 
-qdrant = QdrantClient(url=QDRANT_URL, prefer_grpc=False)
+# qdrant = QdrantClient(url=QDRANT_URL, prefer_grpc=False)
+qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, prefer_grpc=False)
 
-# Recreate the collection if it already exists
-if SESSION_ID in [c.name for c in qdrant.get_collections().collections]:
-    print(f"♻️ Recreating existing collection '{SESSION_ID}'...")
-    qdrant.delete_collection(SESSION_ID)
-
-qdrant.recreate_collection(
-    collection_name=SESSION_ID,
-    vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE)
-)
+if not qdrant.collection_exists(SESSION_ID):
+    qdrant.create_collection(
+        collection_name=SESSION_ID,
+        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE)
+    )
+    print(f"🆕 Created new Qdrant collection '{SESSION_ID}'")
 
 print("⚙️ Generating embeddings and uploading to Qdrant...")
 vectors = embeddings.embed_documents([chunk.page_content for chunk in chunks])
 
+myPoints=[
+    models.PointStruct(
+        id=i,
+        vector=vectors[i],
+        payload={"text": chunks[i].page_content,
+                # "unpaywall": json.loads(UNPAYWALL_JSON) if i == 0 and UNPAYWALL_JSON else None
+                }
+    )
+    for i in range(len(chunks))
+]
+if UNPAYWALL_JSON:
+    myPoints.append(
+        models.PointStruct(
+            id=len(chunks),  # unique ID
+            vector=[0.0]*384,  # dummy vector (or some special vector)
+            payload={"unpaywall": json.loads(UNPAYWALL_JSON)}
+        )
+    )
+
 qdrant.upload_points(
     collection_name=SESSION_ID,
-    points=[
-        models.PointStruct(
-            id=i,
-            vector=vectors[i],
-            payload={"text": chunks[i].page_content}
-        )
-        for i in range(len(chunks))
-    ]
+    points=myPoints
 )
 
 print(f"✅ Successfully stored {len(chunks)} text chunks in Qdrant collection '{SESSION_ID}'.")
 
-session_dir = os.path.dirname(PDF_PATH)
-shutil.rmtree(session_dir)
-print(f"🗑️ Deleted session directory '{session_dir}' after successful embedding.")
+os.remove(PDF_PATH)
+print(f"🗑️ Deleted PDF file '{PDF_PATH}' after embedding.")
+
 
 # --- Auto Delete Session Collection after Time Limit ---
 

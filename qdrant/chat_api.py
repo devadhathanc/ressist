@@ -9,13 +9,15 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Load embeddings model (same as before)
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # Initialize Qdrant
-qdrant = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, prefer_grpc=False)
 
 
 if __name__ == "__main__":
@@ -45,5 +47,4 @@ if __name__ == "__main__":
 
     model = genai.GenerativeModel("gemini-2.5-flash")
     response = model.generate_content(prompt)
-
     print(json.dumps({"answer": response.text}))
