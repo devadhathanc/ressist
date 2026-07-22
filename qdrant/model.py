@@ -6,7 +6,6 @@ import json
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Qdrant
 from langchain_huggingface import HuggingFaceEmbeddings
 
 load_dotenv()
@@ -15,7 +14,7 @@ SESSION_ID = os.getenv("SESSION_ID", "default")
 PDF_PATH = os.getenv("PDF_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") or None
 UNPAYWALL_JSON = os.getenv("UNPAYWALL_JSON")
 
 if not PDF_PATH or not os.path.exists(PDF_PATH):

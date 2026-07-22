@@ -5,7 +5,7 @@ from qdrant_client import QdrantClient
 from dotenv import load_dotenv
 load_dotenv()
 
-active_sessions = json.loads(sys.argv[1])
+active_sessions = json.loads(os.getenv("ACTIVE_SESSIONS") or "[]")
 print(f"Active session IDs: {active_sessions}")
 
 client = QdrantClient(

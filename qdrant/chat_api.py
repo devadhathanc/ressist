@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") or None
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Load embeddings model (same as before)

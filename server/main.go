@@ -64,9 +64,9 @@ func withCORS(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func initRedis() {
-	// docker version 1/4
-	// _ = godotenv.Load(".env")
-	_ = godotenv.Load("../.env")
+	// local version 1/5
+	// _ = godotenv.Load("../.env")
+	_ = godotenv.Load(".env")
 	opt, _ := redis.ParseURL(os.Getenv("REDIS_URL"))
 	rdb = redis.NewClient(opt)
 	if _, err := rdb.Ping(ctx).Result(); err != nil {
@@ -104,9 +104,9 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	key := sessionID
 
-	//docker version 2/4
-	// sessionDir := "/app/sessions"
-	sessionDir := "sessions"
+	//local version 2/5
+	sessionDir := "/app/sessions"
+	// sessionDir := "sessions"
 	os.MkdirAll(sessionDir, 0755)
 	if doi != "" {
 		pdfPath, title, journal, jsonResponse, err := fetchPDFByDOI(doi, sessionDir, sessionID)
@@ -244,7 +244,14 @@ func fetchPDFByDOI(doi, sessionDir ,sessionID string) (string, string, string, s
 		return "", "", "", "", fmt.Errorf("No PDF available for this paper")
 	}
 
-	pdfResp, err := http.Get(pdfURL)
+	pdfReq, err := http.NewRequest("GET", pdfURL, nil)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("error creating PDF request: %v", err)
+	}
+	pdfReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Ressist/1.0; mailto:tester@ressist.com)")
+	pdfReq.Header.Set("Accept", "application/pdf")
+
+	pdfResp, err := http.DefaultClient.Do(pdfReq)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("error downloading PDF: %v", err)
 	}
@@ -254,6 +261,17 @@ func fetchPDFByDOI(doi, sessionDir ,sessionID string) (string, string, string, s
 		return "", "", "", "", fmt.Errorf("PDF download returned status %d", pdfResp.StatusCode)
 	}
 
+	// Read body into memory first to validate it's actually a PDF
+	pdfBytes, err := io.ReadAll(pdfResp.Body)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("error reading PDF response: %v", err)
+	}
+
+	// Check if the response starts with PDF magic bytes (%PDF)
+	if len(pdfBytes) < 4 || string(pdfBytes[:4]) != "%PDF" {
+		return "", "", "", "", fmt.Errorf("downloaded file is not a valid PDF (publisher may require direct access)")
+	}
+
 	filePath := sessionDir + "/" + sessionID + ".pdf"
 	outFile, err := os.Create(filePath)
 	if err != nil {
@@ -261,7 +279,7 @@ func fetchPDFByDOI(doi, sessionDir ,sessionID string) (string, string, string, s
 	}
 	defer outFile.Close()
 
-	_, err = io.Copy(outFile, pdfResp.Body)
+	_, err = outFile.Write(pdfBytes)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("error saving PDF file: %v", err)
 	}
@@ -278,27 +296,25 @@ func fetchPDFByDOI(doi, sessionDir ,sessionID string) (string, string, string, s
 func indexPDFtoQdrant(sessionID, pdfPath string, jsonResponse string) {
 	fmt.Println("🧠 Indexing PDF into Qdrant for session:", sessionID)
 
-	cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/model.py")
-	envVars := []string{
-		"SESSION_ID=" + sessionID,
-		"PDF_PATH=" + pdfPath,
-		"UNPAYWALL_JSON="+jsonResponse,
-	}
-	
-	cmd.Env = append(os.Environ(), envVars...)
+	//local version 3/5
+	// cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/model.py")
+	// envVars := []string{
+	// 	"SESSION_ID=" + sessionID,
+	// 	"PDF_PATH=" + pdfPath,
+	// 	"UNPAYWALL_JSON="+jsonResponse,
+	// }
+	// cmd.Env = append(os.Environ(), envVars...)
 
-	//docker version 3/4
+	containerPDFPath := fmt.Sprintf("/app/sessions/%s.pdf", sessionID)
 
-	// containerPDFPath := fmt.Sprintf("/app/sessions/%s.pdf", sessionID)
-
-	// cmd := exec.Command(
-	// 	"docker", "exec",
-	// 	"-e", "SESSION_ID="+sessionID,
-	// 	"-e", "PDF_PATH="+containerPDFPath,
-	// 	"-e", "UNPAYWALL_JSON="+jsonResponse,
-	// 	"qdrant-worker",
-	// 	"python", "/app/model.py",
-	// )
+	cmd := exec.Command(
+		"docker", "exec",
+		"-e", "SESSION_ID="+sessionID,
+		"-e", "PDF_PATH="+containerPDFPath,
+		"-e", "UNPAYWALL_JSON="+jsonResponse,
+		"qdrant-worker",
+		"python", "/app/model.py",
+	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
@@ -399,27 +415,26 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 
 
     fmt.Println("💬 Running chat_api.py for session:", req.SessionID)
-    cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/chat_api.py")
-	
-    cmd.Env = append(os.Environ(),
-        "SESSION_ID="+req.SessionID,	
-        "QUESTION="+req.Question,
-    )
+	//local version 4/5
+    // cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/chat_api.py")
+    // cmd.Env = append(os.Environ(),
+    //     "SESSION_ID="+req.SessionID,
+    //     "QUESTION="+req.Question,
+    // )
 
-	//docker version 4/4
-
-	// cmd := exec.Command(
-	// 	"docker", "exec",
-	// 	"-e", "SESSION_ID="+req.SessionID,
-	// 	"-e", "QUESTION="+req.Question,
-	// 	"qdrant-worker",
-	// 	"python", "/app/chat_api.py",
-	// 	)
+	cmd := exec.Command(
+		"docker", "exec",
+		"-e", "SESSION_ID="+req.SessionID,
+		"-e", "QUESTION="+req.Question,
+		"qdrant-worker",
+		"python", "/app/chat_api.py",
+	)
 
 	
     var out bytes.Buffer
+    var errOut bytes.Buffer
     cmd.Stdout = &out
-    cmd.Stderr = &out
+    cmd.Stderr = &errOut
     err := cmd.Run()
     if err != nil {
         fmt.Println("❌ Error running chat_api.py:", err)
@@ -485,12 +500,18 @@ func cleanupExpiredSessions() {
 		sessionIDs, _ := rdb.Keys(ctx, "*").Result()
 		sessionsJSON, _ := json.Marshal(sessionIDs)
 
-		cmd := exec.Command(	
-			"/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python",
-			"../qdrant/delete_collection.py",
-			string(sessionsJSON),
+		//local version 5/5
+		// cmd := exec.Command(
+		// 	"/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python",
+		// 	"../qdrant/delete_collection.py",
+		// 	string(sessionsJSON),
+		// )
+		cmd := exec.Command(
+			"docker", "exec",
+			"-e", "ACTIVE_SESSIONS="+string(sessionsJSON),
+			"qdrant-worker",
+			"python", "/app/delete_collection.py",
 		)
-
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Run()

@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   client:
     build: ./client
@@ -40,16 +38,30 @@ services:
       - ./qdrant:/app
       - pdf_storage:/app/sessions
     environment:
-      - QDRANT_URL=${QDRANT_URL}
-      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     command: tail -f /dev/null
+    depends_on:
+      - qdrant
+    networks:
+      - ressist_net
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant-db
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
     networks:
       - ressist_net
     restart: unless-stopped
 
 volumes:
   pdf_storage:
+  qdrant_storage:
 
 networks:
   ressist_net:
