@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { API_BASE } from "./config.js";
 
 function Chat() {
   const navigate = useNavigate();
@@ -19,7 +20,7 @@ function Chat() {
   useEffect(() => {
     if (!session_id) return;
 
-    fetch(`http://localhost:8080/api/chat-history?session_id=${session_id}`)
+    fetch(`${API_BASE}/api/chat-history?session_id=${session_id}`)
       .then((res) => res.json())
       .then((data) => {
         const mappedMessages = (data.messages || []).map((msg) => ({
@@ -57,7 +58,7 @@ function Chat() {
     setInput("");
 
     try {
-      const res = await fetch("http://localhost:8080/api/chat", {
+      const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
