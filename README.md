@@ -5,20 +5,20 @@ An AI-powered research assistant that lets you upload or fetch open-access resea
 ## Architecture
 
 ```
-┌──────────────┐     HTTP      ┌──────────────┐   docker exec   ┌────────────────┐
-│              │  ──────────►  │              │  ────────────►  │                │
-│   Client     │               │   Server     │                 │  qdrant-worker │
-│  (React)     │  ◄──────────  │   (Go)       │  ◄────────────  │   (Python)     │
-│  :5173       │     JSON      │   :8080      │     JSON        │                │
-└──────────────┘               └──────┬───────┘                 └───────┬────────┘
-                                      │                                 │
-                                      │ Redis (sessions)                │ Qdrant (vectors)
-                                      ▼                                 │ Gemini (LLM)
-                               ┌──────────────┐                         ▼
-                               │   Upstash    │                   ┌──────────────┐
-                               │   Redis      │                   │  Qdrant DB   │
-                               │  (cloud)     │                   │   :6333      │
-                               └──────────────┘                   └──────────────┘
+┌──────────────┐     HTTP      ┌──────────────┐   exec / docker   ┌────────────────┐
+│              │  ──────────►  │              │  ────────────►    │                │
+│   Client     │               │   Server     │                   │  qdrant-worker │
+│  (React 19)  │  ◄──────────  │   (Go)       │  ◄────────────    │   (Python)     │
+│  :5173       │     JSON      │   :8080      │     JSON          │                │
+└──────────────┘               └──────┬───────┘                   └───────┬────────┘
+                                      │                                   │
+                                      │ Redis (sessions)                  │ Qdrant (vectors)
+                                      ▼                                   │ Gemini (LLM)
+                               ┌──────────────┐                           ▼
+                               │   Upstash    │                     ┌──────────────┐
+                               │   Redis      │                     │  Qdrant DB   │
+                               │  (cloud)     │                     │   :6333      │
+                               └──────────────┘                     └──────────────┘
 ```
 
 ## Application Flow
@@ -30,13 +30,13 @@ User enters DOI
     → Go server fetches metadata from Unpaywall API
     → Downloads the open-access PDF
     → Validates the file is a real PDF (checks %PDF magic bytes)
-    → Saves PDF to shared Docker volume
-    → Calls `docker exec qdrant-worker python model.py`
-        → model.py loads the PDF with PyPDFLoader
+    → Saves PDF to shared session storage
+    → Calls Python worker script (model.py)
+        → Extracts text from PDF with PyPDF
         → Splits into ~1000-char text chunks (with 200-char overlap)
-        → Generates vector embeddings using all-MiniLM-L6-v2
+        → Generates 384-dim dense vector embeddings using FastEmbed (BAAI/bge-small-en-v1.5)
         → Stores vectors in a Qdrant collection named by session ID
-        → Deletes the PDF file after embedding
+        → Deletes the temporary PDF file after embedding
     → Stores session metadata (title, journal, DOI) in Redis with 1-hour TTL
     → Returns session ID to the client
 ```
@@ -45,10 +45,10 @@ User enters DOI
 
 ```
 User sends a question
-    → Go server calls `docker exec qdrant-worker python chat_api.py`
-        → chat_api.py encodes the question into a vector
-        → Queries Qdrant for the 3 most similar text chunks
-        → Builds a prompt: retrieved context + user question
+    → Go server calls Python worker script (chat_api.py)
+        → chat_api.py encodes the question into a 384-dim vector using FastEmbed
+        → Queries Qdrant for the top 3 most similar text chunks
+        → Builds prompt: retrieved context + user question
         → Sends prompt to Gemini 2.5 Flash
         → Returns the answer as JSON
     → Go server stores the Q&A in Redis (chat history)
@@ -69,27 +69,25 @@ Sessions expire after 1 hour (Redis TTL)
 ### Backend (Go Server)
 | Tool | Purpose |
 |---|---|
-| **Go net/http** | HTTP server — no external framework needed |
-| **redis** | Redis client for session storage and chat history |
+| **Go net/http** | High-performance HTTP server & API router |
+| **redis (go-redis)** | Redis client for session state & chat history tracking |
 | **Unpaywall API** | Fetches open-access PDF URLs from DOIs |
-| **os/exec** | Runs Python scripts inside the qdrant-worker container via `docker exec` |
+| **os/exec** | Executes Python ML scripts via `docker exec` (local) or direct `python3` (Render) |
 
 ### ML / AI (Python Worker)
 | Tool | Purpose |
 |---|---|
-| **LangChain** | Document loading (PyPDFLoader) and text splitting |
-| **Sentence Transformers** | Generates vector embeddings using `all-MiniLM-L6-v2` (384-dim) |
-| **PyTorch (CPU)** | ML inference backend for the embedding model |
-| **qdrant-client** | Python SDK for storing and querying vectors in Qdrant |
-| **Google Generative AI** | Calls Gemini 2.5 Flash for generating answers |
-| **pypdf** | PDF parsing and text extraction |
+| **FastEmbed** | High-performance, lightweight ONNX C++ engine for 384-dim vector embeddings (`BAAI/bge-small-en-v1.5`) |
+| **PyPDF** | PDF text extraction |
+| **qdrant-client** | Python SDK for storing and querying vector collections in Qdrant |
+| **Google Generative AI** | Calls Gemini 2.5 Flash for context-augmented Q&A synthesis |
 
 ### Infrastructure
 | Tool | Purpose |
 |---|---|
-| **Docker Compose** | Orchestrates all 4 containers with networking and shared volumes |
-| **Qdrant** | Vector database — stores document embeddings, supports similarity search |
-| **Redis (Upstash)** | Session store with TTL — tracks active sessions and chat history |
+| **Docker Compose** | Orchestrates 4 microservice containers (client, server, worker, vector DB) |
+| **Qdrant** | Vector database — stores document embeddings & handles cosine similarity search |
+| **Redis (Upstash)** | Cloud session store with TTL — tracks active sessions and chat history |
 | **Gemini 2.5 Flash** | Large language model for answering questions with retrieved context |
 
 ## Prerequisites
@@ -114,7 +112,7 @@ REDIS_URL=rediss://default:<password>@<your-endpoint>.upstash.io:6379
 GEMINI_API_KEY=<your-gemini-api-key>
 ```
 
-> **Note:** The `REDIS_URL` must use `rediss://` (double-s) for Upstash TLS. Copy the full connection string from the Upstash dashboard.
+> **Note:** The `REDIS_URL` must use `rediss://` (double-s) for Upstash TLS.
 
 ### 3. Start the application
 
@@ -122,7 +120,7 @@ GEMINI_API_KEY=<your-gemini-api-key>
 docker compose up --build
 ```
 
-The first build takes a few minutes (downloads Python ML dependencies including PyTorch). Subsequent builds use Docker layer caching and take seconds.
+The container build takes seconds due to lightweight FastEmbed dependencies (~50MB RAM footprint).
 
 ### 4. Open the app
 
@@ -148,80 +146,45 @@ docker compose down
 
 ```
 ressist/
-├── client/                    # React frontend
+├── client/                    # React 19 frontend
 │   ├── src/
 │   │   ├── home.jsx           # Session creation / joining UI
 │   │   ├── chat.jsx           # Chat interface
+│   │   ├── config.js          # Dynamic API endpoint configuration
 │   │   ├── header.jsx         # Navigation header
 │   │   ├── footer.jsx         # Page footer
-│   │   ├── about.jsx          # About page
-│   │   └── example.jsx        # Example DOIs
+│   │   └── about.jsx          # About page
 │   ├── Dockerfile
 │   └── package.json
 ├── server/                    # Go backend
-│   ├── main.go                # All HTTP handlers, PDF fetching, session management
+│   ├── main.go                # HTTP handlers, PDF fetching, session lifecycle
 │   ├── Dockerfile             # Multi-stage build (golang → alpine)
 │   ├── go.mod / go.sum
-│   └── sessions/              # (runtime) temporary PDF storage
+│   └── sessions/              # Temporary PDF storage
 ├── qdrant/                    # Python ML worker
-│   ├── model.py               # PDF → text chunks → embeddings → Qdrant
-│   ├── chat_api.py            # Question → vector search → Gemini → answer
+│   ├── model.py               # PDF → text chunks → FastEmbed vectors → Qdrant
+│   ├── chat_api.py            # Question → FastEmbed vector search → Gemini → answer
 │   ├── delete_collection.py   # Cleanup expired session collections
-│   ├── requirements.txt       # Python dependencies
-│   └── Dockerfile             # python:3.11-slim + CPU-only PyTorch
+│   ├── requirements.txt       # Lightweight Python dependencies (FastEmbed, PyPDF)
+│   └── Dockerfile             # python:3.11-slim
+├── Dockerfile.render          # Combined production image for Render PaaS
 ├── compose.yaml               # Docker Compose (4 services + volumes + network)
 ├── .env                       # Environment variables (not committed)
 └── README.md
 ```
 
-## Running Without Docker (Local Development)
+## Production Deployment
 
-For faster iteration, you can run services locally without Docker:
-
-### Prerequisites
-- Node.js 20+
-- Go 1.24+
-- Python 3.11+
-
-### Setup
-
-```bash
-# 1. Set up Python virtual environment (one-time)
-cd qdrant
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# 2. Switch main.go to local mode:
-#    - Uncomment lines marked "//local version"
-#    - Comment out the "docker exec" blocks
-
-# 3. Run the Go server (Terminal 1)
-cd server
-go run main.go
-
-# 4. Run the React client (Terminal 2)
-cd client
-npm install
-npm run dev
-```
-
-> **Note:** In local mode, the Go server calls Python scripts directly using the venv interpreter instead of `docker exec`. You still need a local or remote Qdrant instance running.
-
-## Environment Variables
-
-| Variable | Required | Description |
-|---|---|---|
-| `REDIS_URL` | Yes | Upstash Redis connection string (`rediss://...`) |
-| `GEMINI_API_KEY` | Yes | Google Gemini API key for chat responses |
-| `QDRANT_URL` | Auto | Set automatically in Docker (`http://qdrant:6333`) |
-| `QDRANT_API_KEY` | No | Qdrant Cloud API key (empty for local instance) |
+- **Frontend:** Deployed on **Vercel** (`VITE_API_BASE_URL=https://your-backend.onrender.com`)
+- **Backend:** Deployed on **Render** (using `Dockerfile.render`)
+- **Vector Storage:** Qdrant Cloud (Free Tier)
+- **Session Cache:** Upstash Redis
 
 ## Tech Stack
 
 - **Frontend:** React 19, Vite 7, Tailwind CSS 4
 - **Backend:** Go 1.24 (net/http, go-redis)
-- **ML/AI:** LangChain, Sentence Transformers, PyTorch (CPU), Google Gemini 2.5 Flash
+- **ML/AI:** FastEmbed (`BAAI/bge-small-en-v1.5`), PyPDF, Google Gemini 2.5 Flash
 - **Vector DB:** Qdrant
 - **Sessions:** Redis (Upstash)
-- **Containerization:** Docker Compose
+- **Containerization:** Docker Compose / Render
