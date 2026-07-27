@@ -36,6 +36,14 @@ type ChatMessage struct {
 	Response string `json:"response"`
 }
 
+func isDockerExecMode() bool {
+	if os.Getenv("RENDER") != "" || os.Getenv("USE_DOCKER_EXEC") == "false" {
+		return false
+	}
+	_, err := exec.LookPath("docker")
+	return err == nil
+}
+
 func main() {
 	initRedis()
 	http.HandleFunc("/api/create-session", withCORS(handleCreateSession))
@@ -294,25 +302,29 @@ func fetchPDFByDOI(doi, sessionDir, sessionID string) (string, string, string, s
 func indexPDFtoQdrant(sessionID, pdfPath string, jsonResponse string) {
 	fmt.Println("🧠 Indexing PDF into Qdrant for session:", sessionID)
 
-	//local version 3/5
-	// cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/model.py")
-	// envVars := []string{
-	// 	"SESSION_ID=" + sessionID,
-	// 	"PDF_PATH=" + pdfPath,
-	// 	"UNPAYWALL_JSON="+jsonResponse,
-	// }
-	// cmd.Env = append(os.Environ(), envVars...)
-
-	containerPDFPath := fmt.Sprintf("/app/sessions/%s.pdf", sessionID)
-
-	cmd := exec.Command(
-		"docker", "exec",
-		"-e", "SESSION_ID="+sessionID,
-		"-e", "PDF_PATH="+containerPDFPath,
-		"-e", "UNPAYWALL_JSON="+jsonResponse,
-		"qdrant-worker",
-		"python", "/app/model.py",
-	)
+	var cmd *exec.Cmd
+	if isDockerExecMode() {
+		containerPDFPath := fmt.Sprintf("/app/sessions/%s.pdf", sessionID)
+		cmd = exec.Command(
+			"docker", "exec",
+			"-e", "SESSION_ID="+sessionID,
+			"-e", "PDF_PATH="+containerPDFPath,
+			"-e", "UNPAYWALL_JSON="+jsonResponse,
+			"qdrant-worker",
+			"python", "/app/model.py",
+		)
+	} else {
+		pythonScript := "/app/qdrant/model.py"
+		if _, err := os.Stat(pythonScript); os.IsNotExist(err) {
+			pythonScript = "../qdrant/model.py"
+		}
+		cmd = exec.Command("python3", pythonScript)
+		cmd.Env = append(os.Environ(),
+			"SESSION_ID="+sessionID,
+			"PDF_PATH="+pdfPath,
+			"UNPAYWALL_JSON="+jsonResponse,
+		)
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
@@ -412,20 +424,27 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Println("💬 Running chat_api.py for session:", req.SessionID)
-	//local version 4/5
-	// cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/chat_api.py")
-	// cmd.Env = append(os.Environ(),
-	//     "SESSION_ID="+req.SessionID,
-	//     "QUESTION="+req.Question,
-	// )
 
-	cmd := exec.Command(
-		"docker", "exec",
-		"-e", "SESSION_ID="+req.SessionID,
-		"-e", "QUESTION="+req.Question,
-		"qdrant-worker",
-		"python", "/app/chat_api.py",
-	)
+	var cmd *exec.Cmd
+	if isDockerExecMode() {
+		cmd = exec.Command(
+			"docker", "exec",
+			"-e", "SESSION_ID="+req.SessionID,
+			"-e", "QUESTION="+req.Question,
+			"qdrant-worker",
+			"python", "/app/chat_api.py",
+		)
+	} else {
+		pythonScript := "/app/qdrant/chat_api.py"
+		if _, err := os.Stat(pythonScript); os.IsNotExist(err) {
+			pythonScript = "../qdrant/chat_api.py"
+		}
+		cmd = exec.Command("python3", pythonScript)
+		cmd.Env = append(os.Environ(),
+			"SESSION_ID="+req.SessionID,
+			"QUESTION="+req.Question,
+		)
+	}
 
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -496,18 +515,24 @@ func cleanupExpiredSessions() {
 		sessionIDs, _ := rdb.Keys(ctx, "*").Result()
 		sessionsJSON, _ := json.Marshal(sessionIDs)
 
-		//local version 5/5
-		// cmd := exec.Command(
-		// 	"/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python",
-		// 	"../qdrant/delete_collection.py",
-		// 	string(sessionsJSON),
-		// )
-		cmd := exec.Command(
-			"docker", "exec",
-			"-e", "ACTIVE_SESSIONS="+string(sessionsJSON),
-			"qdrant-worker",
-			"python", "/app/delete_collection.py",
-		)
+		var cmd *exec.Cmd
+		if isDockerExecMode() {
+			cmd = exec.Command(
+				"docker", "exec",
+				"-e", "ACTIVE_SESSIONS="+string(sessionsJSON),
+				"qdrant-worker",
+				"python", "/app/delete_collection.py",
+			)
+		} else {
+			pythonScript := "/app/qdrant/delete_collection.py"
+			if _, err := os.Stat(pythonScript); os.IsNotExist(err) {
+				pythonScript = "../qdrant/delete_collection.py"
+			}
+			cmd = exec.Command("python3", pythonScript)
+			cmd.Env = append(os.Environ(),
+				"ACTIVE_SESSIONS="+string(sessionsJSON),
+			)
+		}
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Run()

@@ -19,4 +19,6 @@ RUN go build -o /app/server_app main.go
 WORKDIR /app
 EXPOSE 8080
 
+ENV RENDER=true
+
 CMD ["/app/server_app"]
