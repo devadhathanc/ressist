@@ -1,5 +1,7 @@
 # Ressist
 
+🚀 **Live Application:** [https://ressist.vercel.app/](https://ressist.vercel.app/)
+
 An AI-powered research assistant that lets you upload or fetch open-access research papers (via DOI) and chat with them using Gemini. Papers are embedded into a vector database (Qdrant) for semantic search, enabling context-aware Q&A.
 
 ## Architecture
@@ -175,8 +177,9 @@ ressist/
 
 ## Production Deployment
 
-- **Frontend:** Deployed on **Vercel** (`VITE_API_BASE_URL=https://your-backend.onrender.com`)
-- **Backend:** Deployed on **Render** (using `Dockerfile.render`)
+- **Live Application:** [https://ressist.vercel.app/](https://ressist.vercel.app/)
+- **Frontend:** Deployed on **Vercel**
+- **Backend API:** Deployed on **Render** (`https://ressist.onrender.com` using `Dockerfile.render`)
 - **Vector Storage:** Qdrant Cloud (Free Tier)
 - **Session Cache:** Upstash Redis
 

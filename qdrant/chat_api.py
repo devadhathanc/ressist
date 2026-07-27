@@ -1,4 +1,6 @@
 import os
+os.environ["ORT_LOGGING_LEVEL"] = "3"
+import gc
 import json
 import google.generativeai as genai
 from fastembed import TextEmbedding
@@ -13,7 +15,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
 qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, prefer_grpc=False)
-embedding_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+embedding_model = TextEmbedding(
+    model_name="BAAI/bge-small-en-v1.5",
+    providers=["CPUExecutionProvider"],
+    threads=1
+)
 
 if __name__ == "__main__":
     session_id = os.getenv("SESSION_ID")
@@ -42,3 +48,6 @@ if __name__ == "__main__":
     model = genai.GenerativeModel("gemini-2.5-flash")
     response = model.generate_content(prompt)
     print(json.dumps({"answer": response.text}))
+    
+    del embedding_model
+    gc.collect()

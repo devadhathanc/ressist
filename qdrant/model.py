@@ -1,4 +1,6 @@
 import os
+os.environ["ORT_LOGGING_LEVEL"] = "3"
+import gc
 import json
 from dotenv import load_dotenv
 from pypdf import PdfReader
@@ -28,6 +30,10 @@ for page in reader.pages:
     if text:
         full_text += text + "\n"
 
+# Clear reader from memory
+del reader
+gc.collect()
+
 # --- Text Chunking (1000 chars with 200 char overlap) ---
 chunk_size = 1000
 chunk_overlap = 200
@@ -40,6 +46,9 @@ while start < len(full_text):
         chunks.append(chunk.strip())
     start += chunk_size - chunk_overlap
 
+del full_text
+gc.collect()
+
 if UNPAYWALL_JSON:
     chunks.append(UNPAYWALL_JSON)
 
@@ -47,8 +56,11 @@ print(f"🧩 Created {len(chunks)} text chunks from PDF.")
 
 # --- Create Embeddings via FastEmbed (C++ ONNX engine) ---
 print("⚙️ Generating embeddings via FastEmbed (BAAI/bge-small-en-v1.5)...")
-embedding_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-vectors = [v.tolist() for v in embedding_model.embed(chunks)]
+embedding_model = TextEmbedding(
+    model_name="BAAI/bge-small-en-v1.5",
+    providers=["CPUExecutionProvider"],
+    threads=1
+)
 
 # --- Store in Qdrant ---
 qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, prefer_grpc=False)
@@ -60,16 +72,19 @@ if not qdrant.collection_exists(SESSION_ID):
     )
     print(f"🆕 Created new Qdrant collection '{SESSION_ID}'")
 
+# Stream vectors & points in mini-batches to keep memory < 30MB
+def generate_points():
+    for i, (chunk, vector) in enumerate(zip(chunks, embedding_model.embed(chunks))):
+        yield models.PointStruct(
+            id=i,
+            vector=vector.tolist(),
+            payload={"text": chunk}
+        )
+
 qdrant.upload_points(
     collection_name=SESSION_ID,
-    points=[
-        models.PointStruct(
-            id=i,
-            vector=vectors[i],
-            payload={"text": chunks[i]}
-        )
-        for i in range(len(chunks))
-    ]
+    points=generate_points(),
+    batch_size=16
 )
 
 print(f"✅ Successfully stored {len(chunks)} text chunks in Qdrant collection '{SESSION_ID}'.")
@@ -77,3 +92,6 @@ print(f"✅ Successfully stored {len(chunks)} text chunks in Qdrant collection '
 if os.path.exists(PDF_PATH):
     os.remove(PDF_PATH)
     print(f"🗑️ Deleted PDF file '{PDF_PATH}' after embedding.")
+
+del embedding_model, chunks
+gc.collect()
