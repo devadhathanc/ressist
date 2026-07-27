@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+# Install Go & build essentials
+RUN apt-get update && apt-get install -y golang git curl && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python ML dependencies
+COPY qdrant/requirements.txt ./qdrant/
+RUN pip install --no-cache-dir -r qdrant/requirements.txt
+
+# Copy source code
+COPY . .
+
+# Build Go server
+WORKDIR /app/server
+RUN go build -o /app/server_app main.go
+
+WORKDIR /app
+EXPOSE 8080
+
+CMD ["/app/server_app"]

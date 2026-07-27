@@ -12,27 +12,28 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
 	rdb *redis.Client
 	ctx = context.Background()
 )
+
 type Session struct {
-    SessionID     string `json:"session_id"`
-    DOI           string `json:"doi"`
-    Title         string `json:"title"`
-    Journal       string `json:"journal"`
-	JsonResponse  string `json:"json_response"`
+	SessionID    string `json:"session_id"`
+	DOI          string `json:"doi"`
+	Title        string `json:"title"`
+	Journal      string `json:"journal"`
+	JsonResponse string `json:"json_response"`
 }
 
 type ChatMessage struct {
-    Sender   string `json:"sender"`
-    Question string `json:"question"`
-    Time     string `json:"time"`
-    Response string `json:"response"`
+	Sender   string `json:"sender"`
+	Question string `json:"question"`
+	Time     string `json:"time"`
+	Response string `json:"response"`
 }
 
 func main() {
@@ -74,11 +75,9 @@ func initRedis() {
 	}
 }
 
-
-
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	keys,err := rdb.Keys(ctx, "*").Result()
+	keys, err := rdb.Keys(ctx, "*").Result()
 	if err != nil {
 		http.Error(w, "Redis error", 500)
 		return
@@ -98,8 +97,8 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := now.Format("06011505")
 
 	session := Session{
-		SessionID:     sessionID,
-		DOI:           doi,
+		SessionID: sessionID,
+		DOI:       doi,
 	}
 
 	key := sessionID
@@ -143,11 +142,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = rdb.HSet(ctx, key, map[string]interface{}{
-		"session_id":     session.SessionID,
-		"doi":            session.DOI,
-		"title":          session.Title,
-		"journal":        session.Journal,
-		"json_response":  session.JsonResponse,
+		"session_id":    session.SessionID,
+		"doi":           session.DOI,
+		"title":         session.Title,
+		"journal":       session.Journal,
+		"json_response": session.JsonResponse,
 	}).Err()
 	if err != nil {
 		http.Error(w, "Failed to save session", 500)
@@ -200,12 +199,12 @@ func handleJoinSession(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(sessionData)
 }
 
-func fetchPDFByDOI(doi, sessionDir ,sessionID string) (string, string, string, string, error) {
+func fetchPDFByDOI(doi, sessionDir, sessionID string) (string, string, string, string, error) {
 	type UnpaywallResponse struct {
-		OpenAccess bool `json:"is_oa"`
+		OpenAccess bool   `json:"is_oa"`
 		Title      string `json:"title"`
-		Journal    string `json:"journal_name"`	
-		BestOA struct {
+		Journal    string `json:"journal_name"`
+		BestOA     struct {
 			URLForPDF string `json:"url_for_pdf"`
 		} `json:"best_oa_location"`
 		RawJSON json.RawMessage `json:"-"`
@@ -327,27 +326,27 @@ func indexPDFtoQdrant(sessionID, pdfPath string, jsonResponse string) {
 }
 
 func storeMessage(sessionID string, msg ChatMessage) error {
-    // Fetch existing messages
-    existing, err := rdb.HGet(ctx, sessionID, "chats").Result()
-    if err != nil && err != redis.Nil {
-        return err
-    }
+	// Fetch existing messages
+	existing, err := rdb.HGet(ctx, sessionID, "chats").Result()
+	if err != nil && err != redis.Nil {
+		return err
+	}
 
-    var messages []ChatMessage
-    if existing != "" {
-        json.Unmarshal([]byte(existing), &messages)
-    }
+	var messages []ChatMessage
+	if existing != "" {
+		json.Unmarshal([]byte(existing), &messages)
+	}
 
-    // Append the new message
-    messages = append(messages, msg)
+	// Append the new message
+	messages = append(messages, msg)
 
-    // Marshal and store back
-    data, err := json.Marshal(messages)
-    if err != nil {
-        return err
-    }
+	// Marshal and store back
+	data, err := json.Marshal(messages)
+	if err != nil {
+		return err
+	}
 
-    return rdb.HSet(ctx, sessionID, "chats", data).Err()
+	return rdb.HSet(ctx, sessionID, "chats", data).Err()
 }
 func handleActiveSessions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -381,46 +380,45 @@ func handleActiveSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func getChatHistory(sessionID string) ([]ChatMessage, error) {
-    val, err := rdb.HGet(ctx, sessionID, "chats").Result()
-    if err != nil && err != redis.Nil {
-        return nil, err
-    }
-    if val == "" {
-        return []ChatMessage{}, nil
-    }
+	val, err := rdb.HGet(ctx, sessionID, "chats").Result()
+	if err != nil && err != redis.Nil {
+		return nil, err
+	}
+	if val == "" {
+		return []ChatMessage{}, nil
+	}
 
-    var messages []ChatMessage
-    json.Unmarshal([]byte(val), &messages)
-    return messages, nil
+	var messages []ChatMessage
+	json.Unmarshal([]byte(val), &messages)
+	return messages, nil
 }
 
 func handleChat(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 
-    if r.Method != http.MethodPost {
-        w.WriteHeader(http.StatusMethodNotAllowed)
-        json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
-        return
-    }
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+		return
+	}
 
-    var req struct {
-        SessionID string `json:"session_id"`
-        Question  string `json:"question"`
-    }
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" || req.Question == "" {
-        w.WriteHeader(http.StatusBadRequest)
-        json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
-        return
-    }
+	var req struct {
+		SessionID string `json:"session_id"`
+		Question  string `json:"question"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" || req.Question == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
 
-
-    fmt.Println("💬 Running chat_api.py for session:", req.SessionID)
+	fmt.Println("💬 Running chat_api.py for session:", req.SessionID)
 	//local version 4/5
-    // cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/chat_api.py")
-    // cmd.Env = append(os.Environ(),
-    //     "SESSION_ID="+req.SessionID,
-    //     "QUESTION="+req.Question,
-    // )
+	// cmd := exec.Command("/Users/devadhathan/Documents/codes/Projects/ressist/ressist/qdrant/venv/bin/python", "../qdrant/chat_api.py")
+	// cmd.Env = append(os.Environ(),
+	//     "SESSION_ID="+req.SessionID,
+	//     "QUESTION="+req.Question,
+	// )
 
 	cmd := exec.Command(
 		"docker", "exec",
@@ -430,67 +428,66 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		"python", "/app/chat_api.py",
 	)
 
-	
-    var out bytes.Buffer
-    var errOut bytes.Buffer
-    cmd.Stdout = &out
-    cmd.Stderr = &errOut
-    err := cmd.Run()
-    if err != nil {
-        fmt.Println("❌ Error running chat_api.py:", err)
-        fmt.Println("Output:", out.String())
-        http.Error(w, "Error executing chat service", 500)
-        return
-    }
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	err := cmd.Run()
+	if err != nil {
+		fmt.Println("❌ Error running chat_api.py:", err)
+		fmt.Println("Output:", out.String())
+		http.Error(w, "Error executing chat service", 500)
+		return
+	}
 
-    fmt.Println("✅ chat_api.py executed successfully for session", req.SessionID)
+	fmt.Println("✅ chat_api.py executed successfully for session", req.SessionID)
 
-    // Parse JSON returned by chat_api.py
-    var botResp struct {
-        Answer string `json:"answer"`
-    }
-    if err := json.Unmarshal(out.Bytes(), &botResp); err != nil {
-        fmt.Println("❌ Failed to parse bot response:", err)
-        http.Error(w, "Invalid bot response", 500)
-        return
-    }
+	// Parse JSON returned by chat_api.py
+	var botResp struct {
+		Answer string `json:"answer"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &botResp); err != nil {
+		fmt.Println("❌ Failed to parse bot response:", err)
+		http.Error(w, "Invalid bot response", 500)
+		return
+	}
 
-    // Store bot response in Redis
-    chatMsg := ChatMessage{
+	// Store bot response in Redis
+	chatMsg := ChatMessage{
 		Sender:   "user",
-        Question: req.Question,
-        Time:     time.Now().Format(time.RFC3339),
-        Response: botResp.Answer,
-    }
-    storeMessage(req.SessionID, chatMsg)
+		Question: req.Question,
+		Time:     time.Now().Format(time.RFC3339),
+		Response: botResp.Answer,
+	}
+	storeMessage(req.SessionID, chatMsg)
 
-    // Send response to frontend
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(botResp)
+	// Send response to frontend
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(botResp)
 }
 
 func handleChatHistory(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "application/json")
-	
-    sessionID := r.URL.Query().Get("session_id")
-    if sessionID == "" {
-        http.Error(w, "Missing session_id", 400)
-        return
-    }
-    messages, err := getChatHistory(sessionID)
-    if err != nil {
-        http.Error(w, "Failed to fetch chat history", 500)
-        return
-    }
-	title, _ := rdb.HGet(ctx, sessionID, "title").Result()
-    journal, _ := rdb.HGet(ctx, sessionID, "journal").Result()
-    response := map[string]interface{}{
-        "title":    title,
-        "journal":  journal,
-        "messages": messages,
-    }
+	w.Header().Set("Content-Type", "application/json")
 
-    json.NewEncoder(w).Encode(response)
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		http.Error(w, "Missing session_id", 400)
+		return
+	}
+	messages, err := getChatHistory(sessionID)
+	if err != nil {
+		http.Error(w, "Failed to fetch chat history", 500)
+		return
+	}
+	title, _ := rdb.HGet(ctx, sessionID, "title").Result()
+	journal, _ := rdb.HGet(ctx, sessionID, "journal").Result()
+	response := map[string]interface{}{
+		"title":    title,
+		"journal":  journal,
+		"messages": messages,
+	}
+
+	json.NewEncoder(w).Encode(response)
 }
 
 func cleanupExpiredSessions() {
