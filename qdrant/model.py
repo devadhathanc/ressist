@@ -1,18 +1,15 @@
 import os
-import time
-import threading
-import shutil
 import json
 from dotenv import load_dotenv
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
+from pypdf import PdfReader
+from fastembed import TextEmbedding
+from qdrant_client import QdrantClient, models
 
 load_dotenv()
+
 # --- Environment Variables ---
 SESSION_ID = os.getenv("SESSION_ID", "default")
 PDF_PATH = os.getenv("PDF_PATH")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") or None
 UNPAYWALL_JSON = os.getenv("UNPAYWALL_JSON")
@@ -23,28 +20,37 @@ if not PDF_PATH or not os.path.exists(PDF_PATH):
 
 print(f"📄 Loading PDF from: {PDF_PATH}")
 
-# --- Load PDF and Split ---
-loader = PyPDFLoader(PDF_PATH)
-docs = loader.load()
+# --- Load PDF & Extract Text ---
+reader = PdfReader(PDF_PATH)
+full_text = ""
+for page in reader.pages:
+    text = page.extract_text()
+    if text:
+        full_text += text + "\n"
 
-splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-chunks = splitter.split_documents(docs)
-chunks.append(
-    # Add Unpaywall JSON as a separate chunk if provided
-    type('Doc', (object,), {'page_content': UNPAYWALL_JSON})()
-) if UNPAYWALL_JSON else None
+# --- Text Chunking (1000 chars with 200 char overlap) ---
+chunk_size = 1000
+chunk_overlap = 200
+chunks = []
+start = 0
+while start < len(full_text):
+    end = start + chunk_size
+    chunk = full_text[start:end]
+    if chunk.strip():
+        chunks.append(chunk.strip())
+    start += chunk_size - chunk_overlap
 
+if UNPAYWALL_JSON:
+    chunks.append(UNPAYWALL_JSON)
 
 print(f"🧩 Created {len(chunks)} text chunks from PDF.")
 
-# --- Create Embeddings ---
-print("⚙️ Using Hugging Face embeddings model...")
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# --- Create Embeddings via FastEmbed (C++ ONNX engine) ---
+print("⚙️ Generating embeddings via FastEmbed (BAAI/bge-small-en-v1.5)...")
+embedding_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+vectors = [v.tolist() for v in embedding_model.embed(chunks)]
 
 # --- Store in Qdrant ---
-from qdrant_client import QdrantClient, models
-
-# qdrant = QdrantClient(url=QDRANT_URL, prefer_grpc=False)
 qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, prefer_grpc=False)
 
 if not qdrant.collection_exists(SESSION_ID):
@@ -54,26 +60,13 @@ if not qdrant.collection_exists(SESSION_ID):
     )
     print(f"🆕 Created new Qdrant collection '{SESSION_ID}'")
 
-print("⚙️ Generating embeddings and uploading to Qdrant...")
-vectors = embeddings.embed_documents([chunk.page_content for chunk in chunks])
-
-
-# if UNPAYWALL_JSON:
-#     myPoints.append(
-#         models.PointStruct(
-#             id=len(chunks),  # unique ID
-#             vector=[0.0]*384,  # dummy vector (or some special vector)
-#             payload={"text": json.loads(UNPAYWALL_JSON)}
-#         )
-#     )
-
 qdrant.upload_points(
     collection_name=SESSION_ID,
     points=[
         models.PointStruct(
             id=i,
             vector=vectors[i],
-            payload={"text": chunks[i].page_content}
+            payload={"text": chunks[i]}
         )
         for i in range(len(chunks))
     ]
@@ -81,16 +74,6 @@ qdrant.upload_points(
 
 print(f"✅ Successfully stored {len(chunks)} text chunks in Qdrant collection '{SESSION_ID}'.")
 
-os.remove(PDF_PATH)
-print(f"🗑️ Deleted PDF file '{PDF_PATH}' after embedding.")
-
-
-# --- Auto Delete Session Collection after Time Limit ---
-
-# def auto_delete_collection():
-#     print(f"🕒 Collection '{SESSION_ID}' will be deleted after 3600 seconds...")
-#     time.sleep(3600)
-#     qdrant.delete_collection(SESSION_ID)
-#     print(f"🗑️ Collection '{SESSION_ID}' has been automatically deleted after timeout.")
-
-# threading.Thread(target=auto_delete_collection, daemon=True).start()
+if os.path.exists(PDF_PATH):
+    os.remove(PDF_PATH)
+    print(f"🗑️ Deleted PDF file '{PDF_PATH}' after embedding.")

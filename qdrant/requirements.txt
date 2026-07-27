@@ -1,25 +1,6 @@
-# Core
 python-dotenv
 qdrant-client
 requests
-numpy
-
-# PDF parsing
 pypdf
-
-# LangChain
-langchain
-langchain-community
-langchain-core
-langchain-text-splitters
-langchain-huggingface
-
-# Hugging Face
-sentence-transformers
-transformers
-huggingface-hub
-
-# FastAPI server (for chat API)
-fastapi
-uvicorn
+fastembed
 google-generativeai

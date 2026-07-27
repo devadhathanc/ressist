@@ -1,45 +1,39 @@
-
-from qdrant_client import QdrantClient
-from qdrant_client import models
-from qdrant_client.models import Filter, FieldCondition, MatchValue
-from sentence_transformers import SentenceTransformer
-import google.generativeai as genai
 import os
-
+import json
+import google.generativeai as genai
+from fastembed import TextEmbedding
+from qdrant_client import QdrantClient
 from dotenv import load_dotenv
+
 load_dotenv()
 
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") or None
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Load embeddings model (same as before)
-embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-# Initialize Qdrant
+genai.configure(api_key=GEMINI_API_KEY)
 qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, prefer_grpc=False)
-
+embedding_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
 
 if __name__ == "__main__":
-    import json
-
     session_id = os.getenv("SESSION_ID")
     question = os.getenv("QUESTION")
     if not question:
         print(json.dumps({"error": "No question provided"}))
         exit(1)
 
-    # Generate embedding for the question
-    question_vector = embedder.encode(question).tolist()
-    # Query Qdrant (modern API syntax)
+    # Generate query vector via FastEmbed
+    question_vector = list(embedding_model.embed([question]))[0].tolist()
+
+    # Query Qdrant
     search_result = qdrant.query_points(
         collection_name=session_id,
         query=question_vector,
         limit=3
-    )   
+    )
 
     retrieved_context = "\n\n".join([
-        hit.payload.get("text","") for hit in search_result.points
+        hit.payload.get("text", "") for hit in search_result.points
         if hasattr(hit, "payload") and "text" in hit.payload
     ])
 
