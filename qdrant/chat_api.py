@@ -1,9 +1,7 @@
 import os
-os.environ["ORT_LOGGING_LEVEL"] = "3"
 import gc
 import json
-import google.generativeai as genai
-from fastembed import TextEmbedding
+import requests
 from qdrant_client import QdrantClient
 from dotenv import load_dotenv
 
@@ -13,13 +11,31 @@ QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") or None
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-genai.configure(api_key=GEMINI_API_KEY)
 qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, prefer_grpc=False)
-embedding_model = TextEmbedding(
-    model_name="BAAI/bge-small-en-v1.5",
-    providers=["CPUExecutionProvider"],
-    threads=1
-)
+
+EMBED_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={GEMINI_API_KEY}"
+CHAT_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+
+def embed_query(text):
+    """Embed a single query string using Gemini gemini-embedding-001 via REST."""
+    payload = {
+        "model": "models/gemini-embedding-001",
+        "content": {"parts": [{"text": text}]},
+        "taskType": "RETRIEVAL_QUERY",
+        "outputDimensionality": 768
+    }
+    resp = requests.post(EMBED_URL, json=payload, timeout=30)
+    resp.raise_for_status()
+    return resp.json()["embedding"]["values"]
+
+def generate_answer(prompt):
+    """Generate an answer using Gemini 2.5 Flash via REST API."""
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    resp = requests.post(CHAT_URL, json=payload, timeout=60)
+    resp.raise_for_status()
+    return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 if __name__ == "__main__":
     session_id = os.getenv("SESSION_ID")
@@ -28,8 +44,8 @@ if __name__ == "__main__":
         print(json.dumps({"error": "No question provided"}))
         exit(1)
 
-    # Generate query vector via FastEmbed
-    question_vector = list(embedding_model.embed([question]))[0].tolist()
+    # Embed query via REST v1
+    question_vector = embed_query(question)
 
     # Query Qdrant
     search_result = qdrant.query_points(
@@ -45,9 +61,7 @@ if __name__ == "__main__":
 
     prompt = f"Context:\n{retrieved_context}\n\nQuestion: {question}\nAnswer:"
 
-    model = genai.GenerativeModel("gemini-2.5-flash")
-    response = model.generate_content(prompt)
-    print(json.dumps({"answer": response.text}))
-    
-    del embedding_model
+    answer = generate_answer(prompt)
+    print(json.dumps({"answer": answer}))
+
     gc.collect()

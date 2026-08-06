@@ -1,10 +1,9 @@
 import os
-os.environ["ORT_LOGGING_LEVEL"] = "3"
 import gc
 import json
+import requests
 from dotenv import load_dotenv
 from pypdf import PdfReader
-from fastembed import TextEmbedding
 from qdrant_client import QdrantClient, models
 
 load_dotenv()
@@ -15,6 +14,7 @@ PDF_PATH = os.getenv("PDF_PATH")
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") or None
 UNPAYWALL_JSON = os.getenv("UNPAYWALL_JSON")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not PDF_PATH or not os.path.exists(PDF_PATH):
     print(f"❌ PDF file not found at {PDF_PATH}")
@@ -30,7 +30,6 @@ for page in reader.pages:
     if text:
         full_text += text + "\n"
 
-# Clear reader from memory
 del reader
 gc.collect()
 
@@ -54,13 +53,27 @@ if UNPAYWALL_JSON:
 
 print(f"🧩 Created {len(chunks)} text chunks from PDF.")
 
-# --- Create Embeddings via FastEmbed (C++ ONNX engine) ---
-print("⚙️ Generating embeddings via FastEmbed (BAAI/bge-small-en-v1.5)...")
-embedding_model = TextEmbedding(
-    model_name="BAAI/bge-small-en-v1.5",
-    providers=["CPUExecutionProvider"],
-    threads=1
-)
+# --- Embed via Gemini REST API (bypasses SDK version quirks) ---
+EMBED_DIM = 768
+BATCH_SIZE = 100
+EMBED_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents?key={GEMINI_API_KEY}"
+
+def embed_batch(texts):
+    """Batch embed texts using Gemini gemini-embedding-001 via direct REST API."""
+    payload = {
+        "requests": [
+            {
+                "model": "models/gemini-embedding-001",
+                "content": {"parts": [{"text": t}]},
+                "taskType": "RETRIEVAL_DOCUMENT",
+                "outputDimensionality": EMBED_DIM
+            }
+            for t in texts
+        ]
+    }
+    resp = requests.post(EMBED_URL, json=payload, timeout=60)
+    resp.raise_for_status()
+    return [e["values"] for e in resp.json()["embeddings"]]
 
 # --- Store in Qdrant ---
 qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, prefer_grpc=False)
@@ -68,23 +81,27 @@ qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, prefer_grpc=False)
 if not qdrant.collection_exists(SESSION_ID):
     qdrant.create_collection(
         collection_name=SESSION_ID,
-        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE)
+        vectors_config=models.VectorParams(size=EMBED_DIM, distance=models.Distance.COSINE)
     )
     print(f"🆕 Created new Qdrant collection '{SESSION_ID}'")
 
-# Stream vectors & points in mini-batches to keep memory < 30MB
-def generate_points():
-    for i, (chunk, vector) in enumerate(zip(chunks, embedding_model.embed(chunks))):
-        yield models.PointStruct(
-            id=i,
-            vector=vector.tolist(),
+print("⚙️ Generating embeddings via Gemini gemini-embedding-001 (REST API)...")
+points = []
+for batch_start in range(0, len(chunks), BATCH_SIZE):
+    batch = chunks[batch_start:batch_start + BATCH_SIZE]
+    vectors = embed_batch(batch)
+    for i, (chunk, vector) in enumerate(zip(batch, vectors)):
+        points.append(models.PointStruct(
+            id=batch_start + i,
+            vector=vector,
             payload={"text": chunk}
-        )
+        ))
+    gc.collect()
 
 qdrant.upload_points(
     collection_name=SESSION_ID,
-    points=generate_points(),
-    batch_size=16
+    points=points,
+    batch_size=32
 )
 
 print(f"✅ Successfully stored {len(chunks)} text chunks in Qdrant collection '{SESSION_ID}'.")
@@ -93,5 +110,5 @@ if os.path.exists(PDF_PATH):
     os.remove(PDF_PATH)
     print(f"🗑️ Deleted PDF file '{PDF_PATH}' after embedding.")
 
-del embedding_model, chunks
+del chunks, points
 gc.collect()

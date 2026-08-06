@@ -5,12 +5,9 @@ RUN apt-get update && apt-get install -y golang git curl && rm -rf /var/lib/apt/
 
 WORKDIR /app
 
-# Install Python ML dependencies
+# Install Python dependencies
 COPY qdrant/requirements.txt ./qdrant/
 RUN pip install --no-cache-dir -r qdrant/requirements.txt
-
-# Pre-download & cache model weights inside container image (0ms runtime download)
-RUN python3 -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5', providers=['CPUExecutionProvider'], threads=1)"
 
 # Copy source code
 COPY . .
