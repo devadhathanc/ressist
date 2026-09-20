@@ -80,47 +80,47 @@ function Home() {
     }
 
     return (
-        <div className="flex flex-col min-h-screen">
+        <div className="flex flex-col min-h-screen bg-white text-black">
             <Header />
             <main className="flex-grow">
                 <div className="flex flex-row justify-center m-4">
-                    <div className="flex flex-col items-center px-2 border-2 border-gray-200 rounded-lg py-2">
-                        <h1 className="text-center mb-2 font-[600]">create</h1>
+                    <div className="flex flex-col items-center px-6 py-4 border border-black rounded-none">
+                        <h1 className="text-center mb-3 text-xs font-mono uppercase tracking-[0.3em]">new session</h1>
                         <input type="text"
-                            className="border-2 border-light rounded m-0 w-64 px-2 py-1"
-                            placeholder="enter DOI or upload below"
+                            className="border border-black rounded-none m-0 w-64 px-3 py-2 text-sm font-mono bg-white focus:outline-none focus:ring-1 focus:ring-black placeholder:text-gray-400"
+                            placeholder="enter DOI"
                             value={doi}
                             disabled={loading}
                             onChange={(e) => setDoi(e.target.value)} />
-                        <h3 className="text-center">or</h3>
+                        <span className="text-xs font-mono text-gray-400 my-2">or</span>
                         <input type="file"
-                            className="border-2 border-light rounded m-0 w-64 px-2 py-1 hover:bg-gray-800 hover:text-white"
+                            className="border border-black rounded-none m-0 w-64 px-3 py-2 text-sm font-mono cursor-pointer file:border-0 file:bg-black file:text-white file:px-3 file:py-1 file:mr-3 file:text-xs file:font-mono file:cursor-pointer"
                             accept="application/pdf"
                             disabled={loading}
                             onChange={(e) => setFile(e.target.files[0])} />
                         <button
-                            className={`border-1 rounded w-20 mt-5 mb-4 ${loading ? 'bg-black text-white cursor-not-allowed' : 'hover:bg-gray-400'}`}
+                            className={`border border-black rounded-none px-6 py-2 mt-5 mb-2 text-xs font-mono uppercase tracking-widest transition-colors ${loading ? 'bg-black text-white cursor-not-allowed' : 'hover:bg-black hover:text-white'}`}
                             type="submit"
                             disabled={loading}
                             onClick={() => handleCreate()}>
-                            DONE
+                            {loading ? '...' : 'GO'}
                         </button>
 
                         <div className={`flex-grow flex items-center justify-center pt-[5%] ${loading ? 'animate-pulse' : 'hidden'}`}>
-                            <h1 className="text-center text-[150%] font-semibold">+ {text} +</h1>
+                            <h1 className="text-center text-sm font-mono tracking-widest uppercase">{text}</h1>
                         </div>
                     </div>
                 </div>
-                <br />
-                <hr className="border-gray-300 mx-[10%]" />
+
+                <div className="mx-[10%] my-6 border-t border-gray-200" />
 
                 {/* Active Sessions */}
                 <div className="flex flex-col justify-center items-center mt-6 mx-[10%]">
-                    <h2 className="text-lg font-semibold mb-2 underline">Sessions</h2>
+                    <h2 className="text-xs font-mono uppercase tracking-[0.3em] mb-4">active sessions</h2>
                     {activeSessions.length === 0 ? (
-                        <p>No active sessions.</p>
+                        <p className="text-sm font-mono text-gray-400">No active sessions.</p>
                     ) : (
-                        <ul className="flex flex-col flex-wrap sm:flex-row gap-2">
+                        <ul className="flex flex-col flex-wrap sm:flex-row gap-3">
                             {activeSessions.map((session) => {
                                 const minutes = Math.floor(session.ttl_seconds / 60);
                                 const seconds = session.ttl_seconds % 60;
@@ -128,7 +128,7 @@ function Home() {
                                 return (
                                     <li
                                         key={session.session_id}
-                                        className={`border p-2 w-50 rounded cursor-pointer ${loading ? "opacity-50 pointer-events-none" : "hover:bg-gray-200"}`}
+                                        className={`border border-black p-3 w-52 cursor-pointer font-mono transition-colors ${loading ? "opacity-50 pointer-events-none" : "hover:bg-black hover:text-white"}`}
                                         disabled={loading}
                                         onClick={() =>
                                             navigate(`/chat/${session.session_id}`, {
@@ -138,15 +138,14 @@ function Home() {
                                             })
                                         }
                                     >
-                                        <p><b>Session ID:</b> {session.session_id}</p>
-                                        <p><b>Active for:</b> {minutes}m {seconds}s</p>
+                                        <p className="text-xs"><span className="opacity-50">id:</span> {session.session_id}</p>
+                                        <p className="text-xs mt-1"><span className="opacity-50">ttl:</span> {minutes}m {seconds}s</p>
                                     </li>
                                 );
                             })}
                         </ul>
                     )}
                 </div>
-
 
 
 
